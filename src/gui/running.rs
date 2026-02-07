@@ -24,11 +24,8 @@ pub(super) struct RunningState {
 pub(super) fn draw_running(ctx: &egui::Context, running: &mut RunningState) -> Action {
     let state = &running.app_state;
     let elapsed = running.started_at.elapsed();
-    let timeout_secs = running.timeout_minutes * 60;
-    let remaining = timeout_secs.saturating_sub(elapsed.as_secs());
-    let remaining_min = remaining / 60;
-    let remaining_sec = remaining % 60;
     let downloads = state.download_count.load(Ordering::Relaxed);
+    let no_timeout = running.timeout_minutes == 0;
 
     let base_url = state.base_url();
 
@@ -89,17 +86,35 @@ pub(super) fn draw_running(ctx: &egui::Context, running: &mut RunningState) -> A
                         ui.add_space(40.0);
 
                         ui.vertical(|ui| {
-                            section_label(ui, "TIME LEFT");
-                            let time_color = if remaining < 60 { ACCENT } else { TEXT };
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "{:02}:{:02}",
-                                    remaining_min, remaining_sec
-                                ))
-                                .size(20.0)
-                                .color(time_color)
-                                .strong(),
-                            );
+                            if no_timeout {
+                                section_label(ui, "UPTIME");
+                                let secs = elapsed.as_secs();
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "{:02}:{:02}",
+                                        secs / 60,
+                                        secs % 60
+                                    ))
+                                    .size(20.0)
+                                    .color(TEXT)
+                                    .strong(),
+                                );
+                            } else {
+                                section_label(ui, "TIME LEFT");
+                                let timeout_secs = running.timeout_minutes * 60;
+                                let remaining = timeout_secs.saturating_sub(elapsed.as_secs());
+                                let time_color = if remaining < 60 { ACCENT } else { TEXT };
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "{:02}:{:02}",
+                                        remaining / 60,
+                                        remaining % 60
+                                    ))
+                                    .size(20.0)
+                                    .color(time_color)
+                                    .strong(),
+                                );
+                            }
                         });
 
                         ui.add_space(40.0);
@@ -137,84 +152,113 @@ pub(super) fn draw_running(ctx: &egui::Context, running: &mut RunningState) -> A
                                 .color(TEXT_DIM),
                         );
                     } else {
-                        // Table header
-                        ui.horizontal(|ui| {
-                            ui.allocate_ui(egui::vec2(24.0, 16.0), |ui| {
-                                ui.label(
-                                    egui::RichText::new("").size(11.0).color(TEXT_DIM),
-                                );
-                            });
-                            ui.allocate_ui(egui::vec2(140.0, 16.0), |ui| {
-                                ui.label(
-                                    egui::RichText::new("Hostname")
-                                        .size(11.0)
-                                        .color(TEXT_DIM)
-                                        .strong(),
-                                );
-                            });
-                            ui.allocate_ui(egui::vec2(60.0, 16.0), |ui| {
-                                ui.label(
-                                    egui::RichText::new("Platform")
-                                        .size(11.0)
-                                        .color(TEXT_DIM)
-                                        .strong(),
-                                );
-                            });
-                            ui.label(
-                                egui::RichText::new("Time")
-                                    .size(11.0)
-                                    .color(TEXT_DIM)
-                                    .strong(),
-                            );
-                        });
+                        let table_width = ui.available_width();
 
-                        ui.add_space(2.0);
+                        let col_gap = 12.0;
+                        let col_status = 100.0;
+                        let col_platform = 80.0;
+                        let col_time = 80.0;
+                        let col_hostname = table_width
+                            - col_status
+                            - col_platform
+                            - col_time
+                            - col_gap * 3.0;
 
-                        for host in hosts.iter().rev() {
-                            let (icon, icon_color) = match &host.status {
-                                HostStatus::Registered => {
-                                    (host.status.icon(), TEXT_DIM)
-                                }
-                                HostStatus::SensorReady => {
-                                    (host.status.icon(), YELLOW)
-                                }
-                                HostStatus::Installed => {
-                                    (host.status.icon(), GREEN)
-                                }
-                                HostStatus::Failed(_) => {
-                                    (host.status.icon(), ACCENT)
-                                }
+                        for (i, host) in hosts.iter().rev().enumerate() {
+                            let status_color = match &host.status {
+                                HostStatus::Registered => TEXT_DIM,
+                                HostStatus::SensorReady => YELLOW,
+                                HostStatus::Installed => GREEN,
+                                HostStatus::Failed(_) => ACCENT,
                             };
 
-                            ui.horizontal(|ui| {
-                                ui.allocate_ui(egui::vec2(24.0, 16.0), |ui| {
-                                    ui.label(
-                                        egui::RichText::new(icon)
-                                            .size(13.0)
-                                            .color(icon_color),
-                                    );
-                                });
-                                ui.allocate_ui(egui::vec2(140.0, 16.0), |ui| {
-                                    ui.label(
-                                        egui::RichText::new(&host.hostname)
-                                            .size(12.0)
-                                            .color(TEXT),
-                                    );
-                                });
-                                ui.allocate_ui(egui::vec2(60.0, 16.0), |ui| {
-                                    ui.label(
-                                        egui::RichText::new(&host.platform)
-                                            .size(12.0)
-                                            .color(TEXT_DIM),
-                                    );
-                                });
-                                ui.label(
-                                    egui::RichText::new(
-                                        host.time.format("%H:%M:%S").to_string(),
-                                    )
-                                    .size(12.0)
-                                    .color(TEXT_DIM),
+                            // Alternating row background
+                            let row_rect = ui.available_rect_before_wrap();
+                            let row_rect = egui::Rect::from_min_size(
+                                row_rect.min,
+                                egui::vec2(table_width, 22.0),
+                            );
+                            if i % 2 == 1 {
+                                ui.painter().rect_filled(
+                                    row_rect,
+                                    egui::CornerRadius::same(2),
+                                    ROW_ALT,
                                 );
+                            }
+
+                            ui.horizontal(|ui| {
+                                ui.set_height(22.0);
+                                ui.set_width(table_width);
+                                ui.spacing_mut().item_spacing.x = col_gap;
+
+                                // Status: icon + text
+                                ui.allocate_ui(egui::vec2(col_status, 22.0), |ui| {
+                                    ui.add_space(8.0);
+                                    ui.horizontal_centered(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 0.0;
+                                        ui.label(
+                                            egui::RichText::new(format!(
+                                                "{} {}",
+                                                host.status.icon(),
+                                                host.status.text()
+                                            ))
+                                            .size(12.0)
+                                            .color(status_color),
+                                        );
+                                    });
+                                });
+
+                                // Hostname
+                                ui.allocate_ui(egui::vec2(col_hostname, 22.0), |ui| {
+                                    ui.centered_and_justified(|ui| {
+                                        ui.with_layout(
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                ui.label(
+                                                    egui::RichText::new(&host.hostname)
+                                                        .size(12.0)
+                                                        .color(TEXT),
+                                                );
+                                            },
+                                        );
+                                    });
+                                });
+
+                                // Platform
+                                ui.allocate_ui(egui::vec2(col_platform, 22.0), |ui| {
+                                    ui.centered_and_justified(|ui| {
+                                        ui.with_layout(
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                ui.label(
+                                                    egui::RichText::new(&host.platform)
+                                                        .size(12.0)
+                                                        .color(TEXT_DIM),
+                                                );
+                                            },
+                                        );
+                                    });
+                                });
+
+                                // Time
+                                ui.allocate_ui(egui::vec2(col_time, 22.0), |ui| {
+                                    ui.centered_and_justified(|ui| {
+                                        ui.with_layout(
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                ui.label(
+                                                    egui::RichText::new(
+                                                        host.time
+                                                            .format("%H:%M:%S")
+                                                            .to_string(),
+                                                    )
+                                                    .size(12.0)
+                                                    .color(TEXT_DIM),
+                                                );
+                                            },
+                                        );
+                                    });
+                                });
                             });
                         }
                     }

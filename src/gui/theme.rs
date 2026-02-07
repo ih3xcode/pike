@@ -9,6 +9,7 @@ pub const TEXT: egui::Color32 = egui::Color32::from_rgb(220, 220, 225);
 pub const TEXT_DIM: egui::Color32 = egui::Color32::from_rgb(130, 130, 140);
 pub const GREEN: egui::Color32 = egui::Color32::from_rgb(80, 200, 120);
 pub const BORDER: egui::Color32 = egui::Color32::from_rgb(55, 55, 65);
+pub const ROW_ALT: egui::Color32 = egui::Color32::from_rgb(38, 38, 45);
 pub const YELLOW: egui::Color32 = egui::Color32::from_rgb(220, 180, 60);
 
 pub fn apply_theme(ctx: &egui::Context) {

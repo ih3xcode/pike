@@ -36,6 +36,15 @@ impl HostStatus {
             HostStatus::Failed(_) => "✕",
         }
     }
+
+    pub fn text(&self) -> &str {
+        match self {
+            HostStatus::Registered => "Registered",
+            HostStatus::SensorReady => "Ready",
+            HostStatus::Installed => "Installed",
+            HostStatus::Failed(_) => "Failed",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

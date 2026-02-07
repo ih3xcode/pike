@@ -203,9 +203,14 @@ fn run_cli(cli: Cli, has_api_creds: bool) -> Result<(), i32> {
     if state.falcon_client.is_some() {
         eprintln!("API:       connected");
     }
+    let timeout_str = if cli.timeout == 0 {
+        "none".to_string()
+    } else {
+        format!("{} min", cli.timeout)
+    };
     eprintln!(
-        "Timeout:   {} min | Max downloads: {}",
-        cli.timeout, max_dl_str
+        "Timeout:   {} | Max downloads: {}",
+        timeout_str, max_dl_str
     );
 
     let sensors_snapshot = rt.block_on(state.sensors.read());
