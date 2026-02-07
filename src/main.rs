@@ -27,7 +27,7 @@ struct Cli {
     cid: Option<String>,
 
     /// CrowdStrike cloud (us-1, us-2, eu-1, us-gov-1, us-gov-2)
-    #[arg(long)]
+    #[arg(long, default_value = "eu-1")]
     cloud: Option<String>,
 
     /// CrowdStrike API Client ID

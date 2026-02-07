@@ -20,11 +20,7 @@ impl super::MindeliverApp {
         let port: u16 = config.port.parse().unwrap_or(8080);
         let timeout: u64 = config.timeout.parse().unwrap_or(30);
         let max_downloads: u32 = config.max_downloads.parse().unwrap_or(0);
-        let cloud = if config.cloud_idx == 0 {
-            None
-        } else {
-            Some(CLOUD_OPTIONS[config.cloud_idx].to_string())
-        };
+        let cloud = Some(CLOUD_OPTIONS[config.cloud_idx].to_string());
 
         eprintln!("[gui] Starting server...");
         let sensors = if config.sensor_paths.is_empty() {

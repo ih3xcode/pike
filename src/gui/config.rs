@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use super::theme::*;
 use super::widgets::*;
 
-pub const CLOUD_OPTIONS: &[&str] = &["(none)", "us-1", "us-2", "eu-1", "us-gov-1", "us-gov-2"];
+pub const CLOUD_OPTIONS: &[&str] = &["us-1", "us-2", "eu-1", "us-gov-1", "us-gov-2"];
 
 pub(super) struct ConfigState {
     pub config_tab: usize,
@@ -62,7 +62,7 @@ pub(super) fn new_config_state() -> ConfigState {
         config_tab: 0,
         client_id: String::new(),
         client_secret: String::new(),
-        cloud_idx: 0,
+        cloud_idx: 2, // eu-1
         sensor_paths: Vec::new(),
         cid: String::new(),
         pending_files: Arc::new(Mutex::new(Vec::new())),

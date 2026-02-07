@@ -55,7 +55,7 @@ fn api_base_url(cloud: Option<&str>) -> &str {
         Some("us-2") => "https://api.us-2.crowdstrike.com",
         Some("us-gov-1") => "https://api.laggar.gcw.crowdstrike.com",
         Some("us-gov-2") => "https://api.us-gov-2.crowdstrike.com",
-        _ => "https://api.crowdstrike.com",
+        _ => "https://api.eu-1.crowdstrike.com",
     }
 }
 
