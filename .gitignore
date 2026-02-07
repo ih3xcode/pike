@@ -1,0 +1,25 @@
+# Rust build artifacts
+/target
+**/*.rs.bk
+
+# Binary/package artifacts
+*.exe
+*.deb
+*.rpm
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment / secrets
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tools
+.claude/
