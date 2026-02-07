@@ -4,6 +4,12 @@ CrowdStrike Falcon sensor deployment tool. Serves installation scripts and senso
 
 Works on Linux (deb/rpm) and Windows (exe). Has both CLI and GUI modes.
 
+## Screenshots
+
+| Main screen | Files mode | Running server |
+|---|---|---|
+| ![Main screen](screenshots/main.png) | ![Files mode](screenshots/files.png) | ![Running server](screenshots/running.png) |
+
 ## Build
 
 Requires Rust 2024 edition.
