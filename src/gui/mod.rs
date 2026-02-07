@@ -78,7 +78,9 @@ pub fn run_gui() {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([520.0, 620.0])
-            .with_min_inner_size([420.0, 480.0]),
+            .with_resizable(false)
+            .with_maximize_button(false),
+        renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };
 

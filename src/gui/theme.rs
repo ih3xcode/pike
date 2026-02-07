@@ -13,6 +13,7 @@ pub const ROW_ALT: egui::Color32 = egui::Color32::from_rgb(38, 38, 45);
 pub const YELLOW: egui::Color32 = egui::Color32::from_rgb(220, 180, 60);
 
 pub fn apply_theme(ctx: &egui::Context) {
+    ctx.options_mut(|opt| opt.theme_preference = egui::ThemePreference::Dark);
     let mut style = (*ctx.style()).clone();
 
     style.visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::same(6);
@@ -30,10 +31,12 @@ pub fn apply_theme(ctx: &egui::Context) {
     style.visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, TEXT_DIM);
 
     style.visuals.widgets.inactive.bg_fill = FIELD_BG;
+    style.visuals.widgets.inactive.weak_bg_fill = FIELD_BG;
     style.visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, TEXT);
     style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, BORDER);
 
     style.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(52, 52, 62);
+    style.visuals.widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(52, 52, 62);
     style.visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
     style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, ACCENT);
 

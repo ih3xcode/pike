@@ -1,3 +1,5 @@
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 mod error;
 mod falcon_api;
 mod gui;
@@ -68,6 +70,16 @@ struct Cli {
 }
 
 fn main() {
+    // Re-attach to parent console so CLI output works even with windows_subsystem = "windows".
+    // Succeeds when launched from a terminal; silently fails on double-click (no parent console).
+    #[cfg(target_os = "windows")]
+    {
+        unsafe extern "system" {
+            fn AttachConsole(id: u32) -> i32;
+        }
+        unsafe { AttachConsole(0xFFFFFFFF); } // ATTACH_PARENT_PROCESS
+    }
+
     let cli = Cli::parse();
 
     // GUI mode: no sensors and no API credentials provided, or --gui flag
