@@ -36,6 +36,7 @@ pub(super) struct ConfigState {
 
     pub error: Option<String>,
     pub start_requested: bool,
+    pub update_requested: bool,
 }
 
 #[derive(Clone)]
@@ -78,6 +79,7 @@ pub(super) fn new_config_state() -> ConfigState {
         auth_enabled: true,
         error: None,
         start_requested: false,
+        update_requested: false,
     }
 }
 
@@ -108,6 +110,7 @@ pub(super) fn config_from_saved(saved: SavedConfig) -> ConfigState {
         auth_enabled: saved.auth_enabled,
         error: None,
         start_requested: false,
+        update_requested: false,
     }
 }
 
@@ -129,7 +132,12 @@ pub(super) fn make_saved_config(config: &ConfigState) -> SavedConfig {
     }
 }
 
-pub(super) fn draw_config(ctx: &egui::Context, config: &mut ConfigState) {
+pub(super) fn draw_config(
+    ctx: &egui::Context,
+    config: &mut ConfigState,
+    update_info: Option<&crate::update::UpdateInfo>,
+    update_status: Option<&str>,
+) {
     // Handle file dialog results
     {
         let mut pending = config.pending_files.lock().unwrap_or_else(|e| e.into_inner());
@@ -147,7 +155,61 @@ pub(super) fn draw_config(ctx: &egui::Context, config: &mut ConfigState) {
         .frame(egui::Frame::new().fill(BG).inner_margin(egui::Margin::same(24)))
         .show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                heading(ui, "pike");
+                ui.horizontal(|ui| {
+                    heading(ui, "pike");
+                    ui.label(
+                        egui::RichText::new(format!("v{}", crate::update::CURRENT_VERSION))
+                            .size(11.0)
+                            .color(TEXT_DIM),
+                    );
+                });
+
+                // Update banner
+                if let Some(status) = update_status {
+                    ui.add_space(4.0);
+                    egui::Frame::new()
+                        .fill(PANEL_BG)
+                        .corner_radius(egui::CornerRadius::same(6))
+                        .stroke(egui::Stroke::new(1.0, GREEN))
+                        .inner_margin(egui::Margin::same(8))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.label(
+                                egui::RichText::new(status)
+                                    .size(12.0)
+                                    .color(GREEN),
+                            );
+                        });
+                } else if let Some(info) = update_info {
+                    ui.add_space(4.0);
+                    egui::Frame::new()
+                        .fill(PANEL_BG)
+                        .corner_radius(egui::CornerRadius::same(6))
+                        .stroke(egui::Stroke::new(1.0, GREEN))
+                        .inner_margin(egui::Margin::same(8))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "Update available: v{} \u{2192} v{}",
+                                        info.current_version, info.latest_version
+                                    ))
+                                    .size(12.0)
+                                    .color(GREEN),
+                                );
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if accent_button(ui, "Update").clicked() {
+                                            config.update_requested = true;
+                                        }
+                                    },
+                                );
+                            });
+                        });
+                }
+
                 ui.add_space(16.0);
 
                 // === Tabbed card (API / Files) ===

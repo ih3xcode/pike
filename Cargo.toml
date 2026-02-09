@@ -1,6 +1,6 @@
 [package]
 name = "pike"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "CrowdStrike Falcon sensor deployment tool"
 authors = ["Stanislav <ih3xcode@protonmail.com>"]
@@ -25,6 +25,9 @@ sha2 = "0.10.9"
 tokio = { version = "1.49.0", features = ["full"] }
 thiserror = "2.0.18"
 wgpu = "27"
+semver = "1"
+self-replace = "1.5.0"
+tempfile = "3.25.0"
 
 [profile.release]
 lto = true

@@ -48,6 +48,8 @@ With CrowdStrike API (sensors fetched on demand):
 pike --client-id <ID> --client-secret <SECRET> --cid <CID> --cloud us-1
 ```
 
+The API client only needs the **Sensor Download** scope with **Read** permission.
+
 ### Flags
 
 | Flag | Description |
