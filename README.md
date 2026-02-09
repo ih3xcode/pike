@@ -83,6 +83,22 @@ irm http://<server>:<port>/<token>/win | iex
 
 Without auth (`--no-auth`), the `/<token>` prefix is omitted.
 
+## Updating
+
+Check for updates:
+
+```
+pike update
+```
+
+Download and install the latest version:
+
+```
+pike update --apply
+```
+
+Pike also checks for updates automatically on startup — in CLI mode a notice is shown in the banner, in GUI mode an update banner appears on the config screen.
+
 ## How it works
 
 1. Pike starts an HTTP server and serves installation scripts
