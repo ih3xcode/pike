@@ -20,7 +20,20 @@ try {
     $arch = $env:PROCESSOR_ARCHITECTURE
 
     Write-Host "Registering with pike server..."
-    $response = Invoke-WebRequest -Uri "{{BASE_URL}}/cb" -Method POST -Body "$hostName|exe|$arch" -UseBasicParsing
+    try {
+        $response = Invoke-WebRequest -Uri "{{BASE_URL}}/cb" -Method POST -Body "$hostName|exe|$arch" -UseBasicParsing
+    } catch {
+        $msg = "Server returned an error"
+        if ($_.Exception.Response) {
+            $code = [int]$_.Exception.Response.StatusCode
+            $reader = [System.IO.StreamReader]::new($_.Exception.Response.GetResponseStream())
+            $body = $reader.ReadToEnd()
+            $reader.Close()
+            $msg = "Server returned HTTP ${code}: $body"
+        }
+        Write-Error "ERROR: $msg"
+        exit 1
+    }
     $parts = $response.Content -split '\|'
     $fileName = $parts[0]
     $sha256 = $parts[1]
@@ -28,7 +41,13 @@ try {
     $sensorPath = Join-Path $tmpDir $fileName
 
     Write-Host "Downloading sensor..."
-    Invoke-WebRequest -Uri "{{BASE_URL}}/s/$fileName" -OutFile $sensorPath -UseBasicParsing
+    try {
+        Invoke-WebRequest -Uri "{{BASE_URL}}/s/$fileName" -OutFile $sensorPath -UseBasicParsing
+    } catch {
+        $code = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { "unknown" }
+        Write-Error "ERROR: Failed to download sensor (HTTP $code)."
+        exit 1
+    }
 
     Write-Host "Verifying checksum..."
     $hash = (Get-FileHash -Path $sensorPath -Algorithm SHA256).Hash

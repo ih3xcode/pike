@@ -37,7 +37,13 @@ fi
 
 echo "Registering with pike server..."
 echo "  host=$HOST pkg=$PKG_TYPE arch=$ARCH distro=$DISTRO_ID version=$DISTRO_VERSION"
-RESPONSE=$(curl -fsS -X POST "{{BASE_URL}}/cb" -d "${HOST}|${PKG_TYPE}|${ARCH}|${DISTRO_ID}|${DISTRO_VERSION}")
+HTTP_CODE=$(curl -sS -o "$TMPDIR/cb_response" -w "%{http_code}" -X POST "{{BASE_URL}}/cb" -d "${HOST}|${PKG_TYPE}|${ARCH}|${DISTRO_ID}|${DISTRO_VERSION}")
+RESPONSE=$(cat "$TMPDIR/cb_response")
+
+if [ "$HTTP_CODE" -ne 200 ]; then
+  echo "ERROR: Server returned HTTP $HTTP_CODE: $RESPONSE" >&2; exit 1
+fi
+
 FILENAME=$(echo "$RESPONSE" | cut -d'|' -f1)
 SHA256=$(echo "$RESPONSE" | cut -d'|' -f2)
 
@@ -46,7 +52,11 @@ if [ -z "$FILENAME" ] || [ -z "$SHA256" ]; then
 fi
 
 echo "Downloading sensor ($FILENAME)..."
-curl -fsS -o "$TMPDIR/$FILENAME" "{{BASE_URL}}/s/$FILENAME"
+HTTP_CODE=$(curl -sS -o "$TMPDIR/$FILENAME" -w "%{http_code}" "{{BASE_URL}}/s/$FILENAME")
+
+if [ "$HTTP_CODE" -ne 200 ]; then
+  echo "ERROR: Failed to download sensor (HTTP $HTTP_CODE)." >&2; exit 1
+fi
 
 echo "Verifying checksum..."
 echo "$SHA256  $TMPDIR/$FILENAME" | sha256sum -c --quiet

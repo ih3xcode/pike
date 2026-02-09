@@ -2,6 +2,7 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 use crate::error::AppError;
+use crate::sensor_match::validate_sensor_filenames;
 use crate::types::{Sensor, SensorType};
 
 pub fn detect_sensor_type(path: &Path) -> Option<SensorType> {
@@ -45,6 +46,10 @@ pub fn load_sensors(paths: &[PathBuf]) -> Result<Vec<Sensor>, AppError> {
             sensor_type,
         });
     }
+    for warning in validate_sensor_filenames(&sensors) {
+        eprintln!("WARNING: {warning}");
+    }
+
     Ok(sensors)
 }
 

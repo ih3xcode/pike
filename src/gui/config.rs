@@ -4,6 +4,8 @@ use std::sync::{Arc, Mutex};
 
 use super::theme::*;
 use super::widgets::*;
+use crate::sensor_match::check_sensor_filename;
+use crate::util::detect_sensor_type;
 
 pub const CLOUD_OPTIONS: &[&str] = &["us-1", "us-2", "eu-1", "us-gov-1", "us-gov-2"];
 
@@ -601,6 +603,36 @@ fn draw_files_tab(ui: &mut egui::Ui, ctx: &egui::Context, config: &mut ConfigSta
         }
         if let Some(i) = to_remove {
             config.sensor_paths.remove(i);
+        }
+
+        // Warn about sensor files with unrecognizable filenames
+        let warnings: Vec<String> = config
+            .sensor_paths
+            .iter()
+            .filter_map(|p| {
+                let sensor_type = detect_sensor_type(p)?;
+                let filename = p.file_name()?.to_string_lossy().to_string();
+                check_sensor_filename(&filename, sensor_type)
+            })
+            .collect();
+
+        if !warnings.is_empty() {
+            ui.add_space(6.0);
+            egui::Frame::new()
+                .fill(PANEL_BG)
+                .corner_radius(egui::CornerRadius::same(6))
+                .stroke(egui::Stroke::new(1.0, YELLOW))
+                .inner_margin(egui::Margin::same(8))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    for warning in &warnings {
+                        ui.label(
+                            egui::RichText::new(warning)
+                                .size(11.0)
+                                .color(YELLOW),
+                        );
+                    }
+                });
         }
     }
 }

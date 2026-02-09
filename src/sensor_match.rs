@@ -67,6 +67,76 @@ fn deb_filename_matches(filename: &str, host_arch: &str) -> bool {
     filename.contains(&format!("_{deb_arch}.deb"))
 }
 
+/// Known RPM distro tags that appear in CrowdStrike sensor filenames.
+const KNOWN_RPM_TAGS: &[&str] = &[
+    "el7", "el8", "el9", "el10", "amzn2", "amzn2023", "suse11", "suse12", "suse15", "ph3", "ph4",
+];
+
+/// Known DEB arch tags in CrowdStrike sensor filenames.
+const KNOWN_DEB_ARCHS: &[&str] = &["amd64", "arm64", "s390x"];
+
+/// Known RPM arch tags in CrowdStrike sensor filenames.
+const KNOWN_RPM_ARCHS: &[&str] = &["x86_64", "aarch64", "s390x"];
+
+/// Check if an RPM filename contains a recognizable distro tag and architecture.
+fn rpm_has_tags(filename: &str) -> bool {
+    let has_distro = KNOWN_RPM_TAGS
+        .iter()
+        .any(|tag| filename.contains(&format!(".{tag}.")));
+    let has_arch = KNOWN_RPM_ARCHS
+        .iter()
+        .any(|arch| filename.contains(&format!(".{arch}.rpm")));
+    has_distro && has_arch
+}
+
+/// Check if a DEB filename contains a recognizable architecture tag.
+fn deb_has_arch(filename: &str) -> bool {
+    KNOWN_DEB_ARCHS
+        .iter()
+        .any(|arch| filename.contains(&format!("_{arch}.deb")))
+}
+
+/// Check a single sensor filename for missing tags. Returns a warning message
+/// if the filename lacks recognizable distro/arch tags, or `None` if it looks valid.
+pub fn check_sensor_filename(filename: &str, sensor_type: SensorType) -> Option<String> {
+    match sensor_type {
+        SensorType::Rpm => {
+            if !rpm_has_tags(filename) {
+                Some(format!(
+                    "RPM '{}': filename lacks distro/arch tags (expected e.g. '.el9.x86_64.rpm'). \
+                     Pike cannot match this sensor to the correct host — expect installation failures \
+                     if it is incompatible.",
+                    filename
+                ))
+            } else {
+                None
+            }
+        }
+        SensorType::Deb => {
+            if !deb_has_arch(filename) {
+                Some(format!(
+                    "DEB '{}': filename lacks arch tag (expected e.g. '_amd64.deb'). \
+                     Pike cannot match this sensor to the correct host — expect installation failures \
+                     if it is incompatible.",
+                    filename
+                ))
+            } else {
+                None
+            }
+        }
+        SensorType::WindowsExe => None,
+    }
+}
+
+/// Validate local sensor filenames and print warnings for sensors that lack
+/// recognizable tags. Returns a list of warning messages.
+pub fn validate_sensor_filenames(sensors: &[Sensor]) -> Vec<String> {
+    sensors
+        .iter()
+        .filter_map(|s| check_sensor_filename(&s.filename, s.sensor_type))
+        .collect()
+}
+
 /// Find best matching sensor from already-loaded local sensors.
 pub fn find_best_local_sensor<'a>(
     sensors: &'a [Sensor],
@@ -90,7 +160,6 @@ pub fn find_best_local_sensor<'a>(
             type_matches
                 .iter()
                 .find(|s| deb_filename_matches(&s.filename, host_arch))
-                .or_else(|| type_matches.first())
                 .copied()
         }
         SensorType::Rpm => {
@@ -114,7 +183,6 @@ pub fn find_best_local_sensor<'a>(
             type_matches
                 .iter()
                 .find(|s| s.filename.contains(&format!(".{host_arch}.rpm")))
-                .or_else(|| type_matches.first())
                 .copied()
         }
         SensorType::WindowsExe => {
@@ -164,27 +232,16 @@ pub fn find_best_api_sensor<'a>(
                     }
                 }
                 eprintln!(
-                    "[match] RPM no exact match for tags {:?} arch={host_arch}, trying arch-only fallback",
+                    "[match] RPM no match for tags {:?} arch={host_arch}",
                     tags
                 );
             } else {
                 eprintln!(
-                    "[match] RPM unknown distro '{}', trying arch-only fallback",
+                    "[match] RPM unknown distro '{}' — no sensor available",
                     distro_id
                 );
             }
-            // Fallback: any RPM with matching arch (prefer el9 as generic)
-            type_matches
-                .iter()
-                .find(|m| {
-                    rpm_filename_matches(&m.name, "el9", host_arch)
-                })
-                .or_else(|| {
-                    type_matches
-                        .iter()
-                        .find(|m| m.name.contains(&format!(".{host_arch}.rpm")))
-                })
-                .copied()
+            None
         }
         "exe" => {
             // Windows: just pick the latest (first in list)
@@ -421,10 +478,10 @@ mod tests {
     }
 
     #[test]
-    fn local_deb_fallback_first() {
+    fn local_deb_no_fallback_wrong_arch() {
         let sensors = vec![test_sensor("falcon_arm64.deb", SensorType::Deb)];
         let result = find_best_local_sensor(&sensors, SensorType::Deb, "x86_64", "ubuntu", "22.04");
-        assert_eq!(result.unwrap().filename, "falcon_arm64.deb");
+        assert!(result.is_none());
     }
 
     #[test]
@@ -491,10 +548,10 @@ mod tests {
     }
 
     #[test]
-    fn api_rpm_fallback_to_el9() {
+    fn api_rpm_no_fallback_unknown_distro() {
         let metas = vec![test_meta("falcon.el9.x86_64.rpm", "rpm", "RHEL 9")];
         let result = find_best_api_sensor(&metas, "rpm", "x86_64", "archlinux", "rolling");
-        assert_eq!(result.unwrap().name, "falcon.el9.x86_64.rpm");
+        assert!(result.is_none());
     }
 
     #[test]
@@ -505,9 +562,98 @@ mod tests {
     }
 
     #[test]
+    fn api_rpm_rhel_fallback_chain() {
+        // el9 not available, should fall back to el8 via RHEL chain
+        let metas = vec![test_meta("falcon.el8.x86_64.rpm", "rpm", "RHEL 8")];
+        let result = find_best_api_sensor(&metas, "rpm", "x86_64", "rhel", "9");
+        assert_eq!(result.unwrap().name, "falcon.el8.x86_64.rpm");
+    }
+
+    #[test]
+    fn api_rpm_no_fallback_wrong_arch() {
+        let metas = vec![test_meta("falcon.el9.x86_64.rpm", "rpm", "RHEL 9")];
+        let result = find_best_api_sensor(&metas, "rpm", "aarch64", "rhel", "9");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn api_deb_no_fallback_wrong_arch() {
+        let metas = vec![test_meta("falcon_amd64.deb", "deb", "Ubuntu")];
+        let result = find_best_api_sensor(&metas, "deb", "aarch64", "ubuntu", "22.04");
+        assert!(result.is_none());
+    }
+
+    #[test]
     fn api_no_match_unknown_type() {
         let metas = vec![test_meta("falcon_amd64.deb", "deb", "Ubuntu")];
         let result = find_best_api_sensor(&metas, "msi", "x86_64", "", "");
+        assert!(result.is_none());
+    }
+
+    // --- validate_sensor_filenames ---
+
+    #[test]
+    fn validate_good_rpm() {
+        let sensors = vec![test_sensor("falcon.el9.x86_64.rpm", SensorType::Rpm)];
+        assert!(validate_sensor_filenames(&sensors).is_empty());
+    }
+
+    #[test]
+    fn validate_bad_rpm_no_tags() {
+        let sensors = vec![test_sensor("sensor1.rpm", SensorType::Rpm)];
+        let warnings = validate_sensor_filenames(&sensors);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("sensor1.rpm"));
+    }
+
+    #[test]
+    fn validate_bad_rpm_missing_arch() {
+        let sensors = vec![test_sensor("falcon.el9.rpm", SensorType::Rpm)];
+        let warnings = validate_sensor_filenames(&sensors);
+        assert_eq!(warnings.len(), 1);
+    }
+
+    #[test]
+    fn validate_good_deb() {
+        let sensors = vec![test_sensor("falcon_amd64.deb", SensorType::Deb)];
+        assert!(validate_sensor_filenames(&sensors).is_empty());
+    }
+
+    #[test]
+    fn validate_bad_deb_no_arch() {
+        let sensors = vec![test_sensor("sensor.deb", SensorType::Deb)];
+        let warnings = validate_sensor_filenames(&sensors);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("sensor.deb"));
+    }
+
+    #[test]
+    fn validate_exe_no_warning() {
+        let sensors = vec![test_sensor("anything.exe", SensorType::WindowsExe)];
+        assert!(validate_sensor_filenames(&sensors).is_empty());
+    }
+
+    #[test]
+    fn validate_mixed_good_and_bad() {
+        let sensors = vec![
+            test_sensor("falcon.el9.x86_64.rpm", SensorType::Rpm),
+            test_sensor("mystery.rpm", SensorType::Rpm),
+            test_sensor("falcon_amd64.deb", SensorType::Deb),
+            test_sensor("blob.deb", SensorType::Deb),
+        ];
+        let warnings = validate_sensor_filenames(&sensors);
+        assert_eq!(warnings.len(), 2);
+    }
+
+    // --- no fallback to first sensor ---
+
+    #[test]
+    fn local_rpm_no_fallback_untagged() {
+        let sensors = vec![
+            test_sensor("sensor1.rpm", SensorType::Rpm),
+            test_sensor("sensor2.rpm", SensorType::Rpm),
+        ];
+        let result = find_best_local_sensor(&sensors, SensorType::Rpm, "x86_64", "rhel", "9");
         assert!(result.is_none());
     }
 }
