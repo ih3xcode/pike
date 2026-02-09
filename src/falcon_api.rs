@@ -51,11 +51,11 @@ struct ResourcesResponse<T> {
 
 fn api_base_url(cloud: Option<&str>) -> &str {
     match cloud {
-        Some("eu-1") => "https://api.eu-1.crowdstrike.com",
         Some("us-2") => "https://api.us-2.crowdstrike.com",
+        Some("eu-1") => "https://api.eu-1.crowdstrike.com",
         Some("us-gov-1") => "https://api.laggar.gcw.crowdstrike.com",
         Some("us-gov-2") => "https://api.us-gov-2.crowdstrike.com",
-        _ => "https://api.eu-1.crowdstrike.com",
+        _ => "https://api.crowdstrike.com",
     }
 }
 
