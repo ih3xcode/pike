@@ -57,7 +57,7 @@ try {
     }
 
     Write-Host "Installing sensor..."
-    Start-Process -FilePath $sensorPath -ArgumentList "/install /quiet /norestart CID={{CID}} {{CLOUD_PARAM}}" -Wait -NoNewWindow
+    Start-Process -FilePath $sensorPath -ArgumentList "/install /quiet /norestart CID={{CID}} {{CLOUD_PARAM}} {{TAGS_PARAM}}" -Wait -NoNewWindow
 
     # Report success
     try { Invoke-WebRequest -Uri "{{BASE_URL}}/done" -Method POST -Body "$hostName|ok" -UseBasicParsing | Out-Null } catch {}

@@ -78,6 +78,7 @@ mod tests {
             shutdown_notify: Arc::new(Notify::new()),
             falcon_client: None,
             hosts: Mutex::new(vec![]),
+            tags: None,
         }
     }
 

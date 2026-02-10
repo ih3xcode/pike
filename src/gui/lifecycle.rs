@@ -109,6 +109,11 @@ impl super::MindeliverApp {
 
         let cid_explicit = config.cid.trim().to_string();
 
+        let tags = crate::scripts::resolve_tags(
+            Some(&config.tags),
+            !config.no_default_tag,
+        );
+
         self.screen = Screen::Starting(StartingState {
             init_handle,
             sensors,
@@ -118,6 +123,7 @@ impl super::MindeliverApp {
             cloud,
             cid_explicit,
             auth_enabled: config.auth_enabled,
+            tags,
             addr,
             public_url,
             saved_config,
@@ -200,6 +206,7 @@ impl super::MindeliverApp {
             shutdown_notify: shutdown_notify.clone(),
             falcon_client: init_result.falcon_client,
             hosts: std::sync::Mutex::new(Vec::new()),
+            tags: starting.tags,
         });
 
         let cloud_str = app_state.cloud.as_deref().unwrap_or("(none)");

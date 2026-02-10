@@ -71,6 +71,14 @@ struct Cli {
     /// Disable token authentication
     #[arg(long)]
     no_auth: bool,
+
+    /// Sensor grouping tags (comma-separated)
+    #[arg(long)]
+    tags: Option<String>,
+
+    /// Disable the default 'deployment/pike' tag
+    #[arg(long)]
+    no_default_tag: bool,
 }
 
 #[derive(Subcommand)]
@@ -275,6 +283,7 @@ fn run_cli(cli: Cli, has_api_creds: bool) -> Result<(), i32> {
         shutdown_notify: shutdown_notify.clone(),
         falcon_client,
         hosts: Mutex::new(Vec::new()),
+        tags: scripts::resolve_tags(cli.tags.as_deref(), !cli.no_default_tag),
     });
 
     // Print banner
@@ -294,6 +303,9 @@ fn run_cli(cli: Cli, has_api_creds: bool) -> Result<(), i32> {
     }
     if state.falcon_client.is_some() {
         eprintln!("API:       connected");
+    }
+    if let Some(tags) = &state.tags {
+        eprintln!("Tags:      {}", tags);
     }
     let timeout_str = if cli.timeout == 0 {
         "none".to_string()

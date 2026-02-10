@@ -77,7 +77,7 @@ else
 fi
 
 echo "Configuring CID..."
-/opt/CrowdStrike/falconctl -s --cid='{{CID}}' {{CLOUD_FLAG}}
+/opt/CrowdStrike/falconctl -s --cid='{{CID}}' {{CLOUD_FLAG}} {{TAGS_FLAG}}
 
 echo "Starting falcon-sensor..."
 if command -v systemctl &>/dev/null; then

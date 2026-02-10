@@ -80,7 +80,7 @@ fn serve_install_sh(
     }
 
     let base_url = resolve_base_url(state, &host);
-    let script = scripts::generate_linux_script(&base_url, &state.cid, state.cloud.as_deref());
+    let script = scripts::generate_linux_script(&base_url, &state.cid, state.cloud.as_deref(), state.tags.as_deref());
 
     log_request("GET", path, remote, 200, "linux script");
     eprintln!("[script] Served linux install script to {remote} (base_url={base_url})");
@@ -107,7 +107,7 @@ fn serve_install_ps1(
     }
 
     let base_url = resolve_base_url(state, &host);
-    let script = scripts::generate_windows_script(&base_url, &state.cid, state.cloud.as_deref());
+    let script = scripts::generate_windows_script(&base_url, &state.cid, state.cloud.as_deref(), state.tags.as_deref());
 
     log_request("GET", path, remote, 200, "windows script");
     eprintln!("[script] Served windows install script to {remote} (base_url={base_url})");

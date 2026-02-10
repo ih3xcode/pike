@@ -72,6 +72,7 @@ pub struct AppState {
     pub shutdown_notify: Arc<Notify>,
     pub falcon_client: Option<FalconClient>,
     pub hosts: Mutex<Vec<HostEntry>>,
+    pub tags: Option<String>,
 }
 
 #[cfg(test)]
@@ -114,6 +115,7 @@ mod tests {
             shutdown_notify: Arc::new(Notify::new()),
             falcon_client: None,
             hosts: Mutex::new(vec![]),
+            tags: None,
         })
     }
 

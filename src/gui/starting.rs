@@ -16,6 +16,7 @@ pub(super) struct StartingState {
     pub cloud: Option<String>,
     pub cid_explicit: String,
     pub auth_enabled: bool,
+    pub tags: Option<String>,
     pub addr: String,
     pub public_url: Option<String>,
     pub saved_config: SavedConfig,

@@ -30,11 +30,15 @@ pub(super) struct ConfigState {
     pub custom_url_enabled: bool,
     pub custom_url: String,
 
+    // Sensor
+    pub tags: String,
+
     // Advanced
     pub show_advanced: bool,
     pub timeout: String,
     pub max_downloads: String,
     pub auth_enabled: bool,
+    pub no_default_tag: bool,
 
     pub error: Option<String>,
     pub start_requested: bool,
@@ -53,9 +57,11 @@ pub(super) struct SavedConfig {
     pub port: String,
     pub custom_url_enabled: bool,
     pub custom_url: String,
+    pub tags: String,
     pub timeout: String,
     pub max_downloads: String,
     pub auth_enabled: bool,
+    pub no_default_tag: bool,
 }
 
 use crate::util::detect_available_addrs;
@@ -75,10 +81,12 @@ pub(super) fn new_config_state() -> ConfigState {
         port: "8080".into(),
         custom_url_enabled: false,
         custom_url: String::new(),
+        tags: String::new(),
         show_advanced: false,
         timeout: "30".into(),
         max_downloads: "0".into(),
         auth_enabled: true,
+        no_default_tag: false,
         error: None,
         start_requested: false,
         update_requested: false,
@@ -106,10 +114,12 @@ pub(super) fn config_from_saved(saved: SavedConfig) -> ConfigState {
         port: saved.port,
         custom_url_enabled: saved.custom_url_enabled,
         custom_url: saved.custom_url,
+        tags: saved.tags,
         show_advanced: false,
         timeout: saved.timeout,
         max_downloads: saved.max_downloads,
         auth_enabled: saved.auth_enabled,
+        no_default_tag: saved.no_default_tag,
         error: None,
         start_requested: false,
         update_requested: false,
@@ -128,9 +138,11 @@ pub(super) fn make_saved_config(config: &ConfigState) -> SavedConfig {
         port: config.port.clone(),
         custom_url_enabled: config.custom_url_enabled,
         custom_url: config.custom_url.clone(),
+        tags: config.tags.clone(),
         timeout: config.timeout.clone(),
         max_downloads: config.max_downloads.clone(),
         auth_enabled: config.auth_enabled,
+        no_default_tag: config.no_default_tag,
     }
 }
 
@@ -232,6 +244,43 @@ pub(super) fn draw_config(
                         1 => draw_files_tab(ui, ctx, config),
                         _ => {}
                     }
+                });
+
+                ui.add_space(12.0);
+
+                // === Sensor card ===
+                card_frame(ui, |ui| {
+                    section_label(ui, "SENSOR");
+                    ui.add_space(4.0);
+
+                    let label_width = 100.0;
+
+                    ui.horizontal(|ui| {
+                        ui.allocate_ui(egui::vec2(label_width, 20.0), |ui| {
+                            ui.label(
+                                egui::RichText::new("Tags").size(13.0).color(TEXT),
+                            );
+                        });
+                        ui.add_sized(
+                            [ui.available_width(), 24.0],
+                            egui::TextEdit::singleline(&mut config.tags)
+                                .hint_text("comma-separated, max 256 chars"),
+                        );
+                    });
+
+                    ui.horizontal(|ui| {
+                        ui.allocate_ui(egui::vec2(label_width, 20.0), |_ui| {});
+                        let hint = if config.no_default_tag {
+                            "sensor grouping tags"
+                        } else {
+                            "deployment/pike added automatically"
+                        };
+                        ui.label(
+                            egui::RichText::new(hint)
+                                .size(11.0)
+                                .color(TEXT_DIM),
+                        );
+                    });
                 });
 
                 ui.add_space(12.0);
@@ -398,6 +447,25 @@ pub(super) fn draw_config(
                             };
                             ui.label(
                                 egui::RichText::new(hint).size(11.0).color(TEXT_DIM),
+                            );
+                        });
+
+                        ui.horizontal(|ui| {
+                            ui.allocate_ui(egui::vec2(label_width, 20.0), |ui| {
+                                ui.label(
+                                    egui::RichText::new("Default tag")
+                                        .size(13.0)
+                                        .color(TEXT),
+                                );
+                            });
+                            let mut include_default = !config.no_default_tag;
+                            if ui.checkbox(&mut include_default, "").changed() {
+                                config.no_default_tag = !include_default;
+                            }
+                            ui.label(
+                                egui::RichText::new("add deployment/pike tag")
+                                    .size(11.0)
+                                    .color(TEXT_DIM),
                             );
                         });
                     });
