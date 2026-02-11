@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-02-10
+
 ### Added
 
 - Sensor grouping tags support (`--tags`) — comma-separated tags passed to
@@ -16,3 +18,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--no-default-tag` CLI flag to opt out of the automatic `deployment/pike` tag.
 - GUI: new "Sensor" configuration card with a tags input field.
 - GUI: "Default tag" checkbox in Advanced settings to toggle the automatic tag.
+
+## [0.2.1] - 2026-02-09
+
+### Changed
+
+- Strict sensor matching — Pike no longer falls back to a random sensor when no
+  exact match is found. Returns a clear error instead of silently serving an
+  incompatible package.
+- Install scripts now display the server's error message (e.g. "no matching
+  sensor available") instead of opaque HTTP error codes.
+
+### Added
+
+- Filename validation warnings — when using local sensor files with
+  unrecognizable filenames (missing distro/arch tags), Pike shows warnings in
+  both CLI and GUI.
+
+### Fixed
+
+- US-1 cloud selection routing to the correct API endpoint.
+
+## [0.2.0] - 2026-02-09
+
+### Added
+
+- Self-update system — `pike update` checks for new releases,
+  `pike update --apply` downloads and replaces the binary in-place.
+- Auto-update check — runs in background on startup; CLI shows a banner notice,
+  GUI shows an update banner with one-click install.
+- `pike --version` flag.
+- Document required API scope (Sensor Download, Read) in README.

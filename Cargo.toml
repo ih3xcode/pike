@@ -1,6 +1,6 @@
 [package]
 name = "pike"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 description = "CrowdStrike Falcon sensor deployment tool"
 authors = ["Stanislav <ih3xcode@protonmail.com>"]
