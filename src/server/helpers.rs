@@ -62,7 +62,7 @@ impl AppState {
 mod tests {
     use super::*;
     use std::sync::{atomic::AtomicU32, Arc, Mutex};
-    use tokio::sync::{Notify, RwLock};
+    use tokio::sync::Notify;
 
     fn test_state(token: Option<&str>, public_url: Option<&str>) -> AppState {
         AppState {
@@ -72,11 +72,12 @@ mod tests {
             addr: "10.0.0.1".into(),
             port: 8080,
             public_url: public_url.map(|s| s.to_string()),
-            sensors: RwLock::new(vec![]),
+            local_sensors: vec![],
+            metadata: None,
+            store: None,
             download_count: AtomicU32::new(0),
             max_downloads: 0,
             shutdown_notify: Arc::new(Notify::new()),
-            falcon_client: None,
             hosts: Mutex::new(vec![]),
             tags: None,
         }

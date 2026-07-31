@@ -132,8 +132,7 @@ async fn serve_sensor(
     remote: &str,
     path: &str,
 ) -> Response {
-    let sensors = state.sensors.read().await;
-    let Some(sensor) = sensors.iter().find(|s| s.filename == filename) else {
+    let Some(sensor) = state.local_sensors.iter().find(|s| s.filename == filename) else {
         log_request("GET", path, remote, 404, "sensor not found");
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -244,67 +243,6 @@ fn parse_callback(body: &str) -> Result<CallbackInfo, &'static str> {
     })
 }
 
-/// Try to find a sensor via API: list available sensors, match, download, and cache.
-async fn try_api_sensor(
-    state: &AppState,
-    info: &CallbackInfo,
-) -> Option<(String, String)> {
-    let client = state.falcon_client.as_ref()?;
-
-    eprintln!("[host] {}: no local match, querying API ...", info.hostname);
-    let platform_str = match info.target_type {
-        SensorType::Deb | SensorType::Rpm => "linux",
-        SensorType::WindowsExe => "windows",
-    };
-
-    let metas = match client.list_sensors(platform_str).await {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("[host] {}: API list sensors failed — {}", info.hostname, e);
-            return None;
-        }
-    };
-
-    let file_type_str = match info.target_type {
-        SensorType::Deb => "deb",
-        SensorType::Rpm => "rpm",
-        SensorType::WindowsExe => "exe",
-    };
-
-    let meta = find_best_api_sensor(&metas, file_type_str, &info.arch, &info.distro_id, &info.distro_version)?;
-
-    eprintln!("[host] {}: best match — {} (os={}, arch={:?})", info.hostname, meta.name, meta.os, meta.architectures);
-    eprintln!("[host] {}: downloading {} from API ...", info.hostname, meta.name);
-
-    let data = match client.download_sensor(&meta.sha256).await {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("[host] {}: API download failed — {}", info.hostname, e);
-            return None;
-        }
-    };
-
-    let sensor_filename = meta.name.clone();
-    let sensor_sha256 = meta.sha256.clone();
-    let sensor_type = info.target_type;
-
-    // Check for race condition: another request may have cached the same sensor
-    {
-        let mut sensors = state.sensors.write().await;
-        if !sensors.iter().any(|s| s.sha256 == sensor_sha256) {
-            sensors.push(Sensor {
-                filename: sensor_filename.clone(),
-                data,
-                sha256: sensor_sha256.clone(),
-                sensor_type,
-            });
-        }
-    }
-
-    eprintln!("[host] {}: sensor ready — {sensor_filename}", info.hostname);
-    Some((sensor_filename, sensor_sha256))
-}
-
 async fn serve_callback(
     state: &AppState,
     req: axum::extract::Request,
@@ -352,37 +290,91 @@ async fn serve_callback(
     );
     eprintln!("[host] {} registered (ip={remote}, type={}, arch={}{distro_info})", info.hostname, info.pkg_type, info.arch);
 
-    // Check existing sensors (smart match by filename pattern)
-    {
-        let sensors = state.sensors.read().await;
-        eprintln!("[host] {}: looking for {}/{} sensor in {} loaded sensor(s)", info.hostname, info.pkg_type, info.arch, sensors.len());
-        let matched = find_best_local_sensor(&sensors, info.target_type, &info.arch, &info.distro_id, &info.distro_version);
-        if let Some(sensor) = matched {
-            eprintln!("[host] {}: matched local sensor {}", info.hostname, sensor.filename);
-            state.update_host_status(&info.hostname, HostStatus::SensorReady);
-            let response = format!("{}|{}", sensor.filename, sensor.sha256);
-            return response.into_response();
-        }
-    }
-
-    // Try to download from API if available
-    if let Some((filename, sha256)) = try_api_sensor(state, &info).await {
+    // 1. Явно передані файли мають пріоритет — це свідомий пін версії
+    if let Some(sensor) = find_best_local_sensor(
+        &state.local_sensors,
+        info.target_type,
+        &info.arch,
+        &info.distro_id,
+        &info.distro_version,
+    ) {
+        eprintln!(
+            "[host] {}: matched local sensor {}",
+            info.hostname, sensor.filename
+        );
         state.update_host_status(&info.hostname, HostStatus::SensorReady);
-        return format!("{filename}|{sha256}").into_response();
+        return format!("{}|{}", sensor.filename, sensor.sha256).into_response();
     }
 
-    if state.falcon_client.is_none() {
-        eprintln!("[host] {}: no local sensor and no API client configured", info.hostname);
-    } else {
-        eprintln!("[host] {}: no matching sensor found via API", info.hostname);
-    }
+    // 2. Інакше — свіжий список з API і кеш за sha256
+    let (Some(metadata), Some(store)) = (&state.metadata, &state.store) else {
+        eprintln!(
+            "[host] {}: no local sensor and no API configured",
+            info.hostname
+        );
+        state.update_host_status(&info.hostname, HostStatus::Failed("no matching sensor".into()));
+        log_request("POST", path, remote, 404, "no sensor available");
+        return (StatusCode::NOT_FOUND, "no matching sensor available").into_response();
+    };
 
-    eprintln!("[host] {} FAILED: no matching sensor available", info.hostname);
-    state.update_host_status(
-        &info.hostname,
-        HostStatus::Failed("no matching sensor".into()),
+    let platform = match info.target_type {
+        SensorType::Deb | SensorType::Rpm => "linux",
+        SensorType::WindowsExe => "windows",
+    };
+
+    let metas = match metadata.get(platform).await {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("[host] {}: sensor list unavailable — {e}", info.hostname);
+            state.update_host_status(
+                &info.hostname,
+                HostStatus::Failed("sensor list unavailable".into()),
+            );
+            log_request("POST", path, remote, 503, "sensor list unavailable");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "sensor list unavailable — CrowdStrike API unreachable",
+            )
+                .into_response();
+        }
+    };
+
+    let file_type = match info.target_type {
+        SensorType::Deb => "deb",
+        SensorType::Rpm => "rpm",
+        SensorType::WindowsExe => "exe",
+    };
+
+    let Some(meta) = find_best_api_sensor(
+        &metas,
+        file_type,
+        &info.arch,
+        &info.distro_id,
+        &info.distro_version,
+    ) else {
+        eprintln!(
+            "[host] {} FAILED: no matching sensor available",
+            info.hostname
+        );
+        state.update_host_status(&info.hostname, HostStatus::Failed("no matching sensor".into()));
+        log_request("POST", path, remote, 404, "no matching sensor");
+        return (StatusCode::NOT_FOUND, "no matching sensor available").into_response();
+    };
+
+    eprintln!(
+        "[host] {}: matched {} (os={})",
+        info.hostname, meta.name, meta.os
     );
-    (StatusCode::NOT_FOUND, "no matching sensor available").into_response()
+
+    if let Err(e) = store.ensure(&meta.sha256).await {
+        eprintln!("[host] {}: cannot prepare sensor — {e}", info.hostname);
+        state.update_host_status(&info.hostname, HostStatus::Failed("sensor unavailable".into()));
+        log_request("POST", path, remote, 502, "sensor download failed");
+        return (StatusCode::BAD_GATEWAY, "sensor download failed").into_response();
+    }
+
+    state.update_host_status(&info.hostname, HostStatus::SensorReady);
+    format!("{}|{}", meta.name, meta.sha256).into_response()
 }
 
 #[cfg(test)]

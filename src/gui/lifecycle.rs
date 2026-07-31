@@ -193,6 +193,30 @@ impl super::MindeliverApp {
         let has_api = init_result.falcon_client.is_some();
         let bind_ip = starting.addr.clone();
 
+        let falcon = init_result.falcon_client.map(std::sync::Arc::new);
+
+        let cache_dir = crate::config::default_cache_dir();
+        if let Err(e) = std::fs::create_dir_all(&cache_dir) {
+            eprintln!(
+                "[gui] WARNING: cannot create cache dir {}: {e}",
+                cache_dir.display()
+            );
+        }
+
+        let metadata = falcon.clone().map(|c| {
+            std::sync::Arc::new(crate::sensor_store::MetadataCache::new(
+                c,
+                std::time::Duration::from_secs(60 * 60),
+            ))
+        });
+        let store = falcon.map(|c| {
+            std::sync::Arc::new(crate::sensor_store::BinaryStore::new(
+                c,
+                cache_dir,
+                21_474_836_480,
+            ))
+        });
+
         let app_state = Arc::new(AppState {
             token,
             cid,
@@ -200,11 +224,12 @@ impl super::MindeliverApp {
             addr: starting.addr,
             port: starting.port,
             public_url: starting.public_url,
-            sensors: tokio::sync::RwLock::new(starting.sensors),
+            local_sensors: starting.sensors,
+            metadata,
+            store,
             download_count: std::sync::atomic::AtomicU32::new(0),
             max_downloads: starting.max_downloads,
             shutdown_notify: shutdown_notify.clone(),
-            falcon_client: init_result.falcon_client,
             hosts: std::sync::Mutex::new(Vec::new()),
             tags: starting.tags,
         });

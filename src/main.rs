@@ -15,7 +15,7 @@ mod util;
 
 use clap::{Parser, Subcommand};
 use std::sync::{atomic::AtomicU32, Arc, Mutex};
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::Notify;
 
 use types::AppState;
 use util::{detect_addr, generate_token, load_sensors};
@@ -311,6 +311,21 @@ fn run_serve(args: config::ServeArgs) -> Result<(), i32> {
         .collect();
     let has_api = falcon_client.is_some();
 
+    let falcon = falcon_client.map(Arc::new);
+    let metadata = falcon.clone().map(|c| {
+        Arc::new(sensor_store::MetadataCache::new(
+            c,
+            std::time::Duration::from_secs(cfg.metadata_ttl_minutes * 60),
+        ))
+    });
+    let store = falcon.clone().map(|c| {
+        Arc::new(sensor_store::BinaryStore::new(
+            c,
+            cfg.cache_dir.clone(),
+            cfg.cache_max_bytes,
+        ))
+    });
+
     let state = Arc::new(AppState {
         token: token.clone(),
         cid,
@@ -318,11 +333,12 @@ fn run_serve(args: config::ServeArgs) -> Result<(), i32> {
         addr: addr.clone(),
         port: cfg.port,
         public_url: cfg.public_url.clone(),
-        sensors: RwLock::new(sensors),
+        local_sensors: sensors,
+        metadata,
+        store,
         download_count: AtomicU32::new(0),
         max_downloads: cfg.max_downloads,
         shutdown_notify: shutdown_notify.clone(),
-        falcon_client,
         hosts: Mutex::new(Vec::new()),
         tags: scripts::resolve_tags(cfg.tags.as_deref(), cfg.default_tag),
     });

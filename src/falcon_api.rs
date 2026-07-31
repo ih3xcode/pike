@@ -30,6 +30,7 @@ pub struct SensorMeta {
     #[allow(dead_code)]
     pub version: String,
     #[serde(default)]
+    #[allow(dead_code)]
     pub architectures: Vec<String>,
 }
 

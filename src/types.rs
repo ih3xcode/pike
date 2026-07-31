@@ -1,5 +1,5 @@
 use std::sync::{atomic::AtomicU32, Arc, Mutex};
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::Notify;
 
 use crate::falcon_api::FalconClient;
 
@@ -66,11 +66,15 @@ pub struct AppState {
     pub addr: String,
     pub port: u16,
     pub public_url: Option<String>,
-    pub sensors: RwLock<Vec<Sensor>>,
+    /// Явно передані файли. Незмінні після старту — завантажене з API
+    /// сюди навмисно не потрапляє, інакше перша завантажена версія
+    /// назавжди перебивала б свіжі метадані.
+    pub local_sensors: Vec<Sensor>,
+    pub metadata: Option<Arc<crate::sensor_store::MetadataCache<FalconClient>>>,
+    pub store: Option<Arc<crate::sensor_store::BinaryStore<FalconClient>>>,
     pub download_count: AtomicU32,
     pub max_downloads: u32,
     pub shutdown_notify: Arc<Notify>,
-    pub falcon_client: Option<FalconClient>,
     pub hosts: Mutex<Vec<HostEntry>>,
     pub tags: Option<String>,
 }
@@ -109,11 +113,12 @@ mod tests {
             addr: "127.0.0.1".into(),
             port: 8080,
             public_url: None,
-            sensors: RwLock::new(vec![]),
+            local_sensors: vec![],
+            metadata: None,
+            store: None,
             download_count: AtomicU32::new(0),
             max_downloads: 0,
             shutdown_notify: Arc::new(Notify::new()),
-            falcon_client: None,
             hosts: Mutex::new(vec![]),
             tags: None,
         })
