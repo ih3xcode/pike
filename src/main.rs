@@ -8,6 +8,7 @@ mod scripts;
 mod sensor_match;
 mod sensor_store;
 mod server;
+mod service;
 mod shutdown;
 mod types;
 pub mod update;
