@@ -1,155 +1,16 @@
 use eframe::egui;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 
-use super::theme::*;
-use super::widgets::*;
-use crate::sensor_match::check_sensor_filename;
-use crate::util::detect_sensor_type;
+use crate::gui::state::{ConfigState, CLOUD_OPTIONS};
+use crate::gui::theme::*;
+use crate::gui::widgets::*;
+use crate::sensors::loading::detect_sensor_type;
+use crate::sensors::matching::check_sensor_filename;
+use crate::update;
 
-pub const CLOUD_OPTIONS: &[&str] = &["us-1", "us-2", "eu-1", "us-gov-1", "us-gov-2"];
-
-pub(super) struct ConfigState {
-    pub config_tab: usize,
-
-    // API tab
-    pub client_id: String,
-    pub client_secret: String,
-    pub cloud_idx: usize,
-
-    // Files tab
-    pub sensor_paths: Vec<PathBuf>,
-    pub cid: String,
-    pub pending_files: Arc<Mutex<Vec<PathBuf>>>,
-    pub file_dialog_open: bool,
-
-    // Network
-    pub available_addrs: Vec<(String, String)>,
-    pub selected_addr_idx: usize,
-    pub port: String,
-    pub custom_url_enabled: bool,
-    pub custom_url: String,
-
-    // Sensor
-    pub tags: String,
-
-    // Advanced
-    pub show_advanced: bool,
-    pub timeout: String,
-    pub max_downloads: String,
-    pub auth_enabled: bool,
-    pub no_default_tag: bool,
-
-    pub error: Option<String>,
-    pub start_requested: bool,
-    pub update_requested: bool,
-}
-
-#[derive(Clone)]
-pub(super) struct SavedConfig {
-    pub config_tab: usize,
-    pub client_id: String,
-    pub client_secret: String,
-    pub cloud_idx: usize,
-    pub sensor_paths: Vec<PathBuf>,
-    pub cid: String,
-    pub selected_addr_idx: usize,
-    pub port: String,
-    pub custom_url_enabled: bool,
-    pub custom_url: String,
-    pub tags: String,
-    pub timeout: String,
-    pub max_downloads: String,
-    pub auth_enabled: bool,
-    pub no_default_tag: bool,
-}
-
-use crate::util::detect_available_addrs;
-
-pub(super) fn new_config_state() -> ConfigState {
-    ConfigState {
-        config_tab: 0,
-        client_id: String::new(),
-        client_secret: String::new(),
-        cloud_idx: 2, // eu-1
-        sensor_paths: Vec::new(),
-        cid: String::new(),
-        pending_files: Arc::new(Mutex::new(Vec::new())),
-        file_dialog_open: false,
-        available_addrs: detect_available_addrs(),
-        selected_addr_idx: 0,
-        port: "8080".into(),
-        custom_url_enabled: false,
-        custom_url: String::new(),
-        tags: String::new(),
-        show_advanced: false,
-        timeout: "30".into(),
-        max_downloads: "0".into(),
-        auth_enabled: true,
-        no_default_tag: false,
-        error: None,
-        start_requested: false,
-        update_requested: false,
-    }
-}
-
-pub(super) fn config_from_saved(saved: SavedConfig) -> ConfigState {
-    let available_addrs = detect_available_addrs();
-    let selected_addr_idx = if saved.selected_addr_idx < available_addrs.len() {
-        saved.selected_addr_idx
-    } else {
-        0
-    };
-    ConfigState {
-        config_tab: saved.config_tab,
-        client_id: saved.client_id,
-        client_secret: saved.client_secret,
-        cloud_idx: saved.cloud_idx,
-        sensor_paths: saved.sensor_paths,
-        cid: saved.cid,
-        pending_files: Arc::new(Mutex::new(Vec::new())),
-        file_dialog_open: false,
-        available_addrs,
-        selected_addr_idx,
-        port: saved.port,
-        custom_url_enabled: saved.custom_url_enabled,
-        custom_url: saved.custom_url,
-        tags: saved.tags,
-        show_advanced: false,
-        timeout: saved.timeout,
-        max_downloads: saved.max_downloads,
-        auth_enabled: saved.auth_enabled,
-        no_default_tag: saved.no_default_tag,
-        error: None,
-        start_requested: false,
-        update_requested: false,
-    }
-}
-
-pub(super) fn make_saved_config(config: &ConfigState) -> SavedConfig {
-    SavedConfig {
-        config_tab: config.config_tab,
-        client_id: config.client_id.clone(),
-        client_secret: config.client_secret.clone(),
-        cloud_idx: config.cloud_idx,
-        sensor_paths: config.sensor_paths.clone(),
-        cid: config.cid.clone(),
-        selected_addr_idx: config.selected_addr_idx,
-        port: config.port.clone(),
-        custom_url_enabled: config.custom_url_enabled,
-        custom_url: config.custom_url.clone(),
-        tags: config.tags.clone(),
-        timeout: config.timeout.clone(),
-        max_downloads: config.max_downloads.clone(),
-        auth_enabled: config.auth_enabled,
-        no_default_tag: config.no_default_tag,
-    }
-}
-
-pub(super) fn draw_config(
+pub(crate) fn draw_config(
     ctx: &egui::Context,
     config: &mut ConfigState,
-    update_info: Option<&crate::update::UpdateInfo>,
+    update_info: Option<&update::UpdateInfo>,
     update_status: Option<&str>,
 ) {
     // Handle file dialog results
@@ -172,7 +33,7 @@ pub(super) fn draw_config(
                 ui.horizontal(|ui| {
                     heading(ui, "pike");
                     ui.label(
-                        egui::RichText::new(format!("v{}", crate::update::CURRENT_VERSION))
+                        egui::RichText::new(format!("v{}", update::CURRENT_VERSION))
                             .size(11.0)
                             .color(TEXT_DIM),
                     );

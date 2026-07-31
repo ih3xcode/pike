@@ -1,160 +1,14 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use serde::Deserialize;
+use crate::common::AppError;
 
-use crate::error::AppError;
+use super::args::ServeArgs;
+use super::defaults::*;
+use super::file::FileConfig;
+use super::validate::validate_token;
 
-pub const DEFAULT_CONFIG_PATH: &str = "/etc/pike/pike.toml";
-
-const DEFAULT_BIND: &str = "0.0.0.0";
-const DEFAULT_PORT: u16 = 8080;
-const DEFAULT_TIMEOUT_MINUTES: u64 = 0;
-const DEFAULT_MAX_DOWNLOADS: u32 = 0;
-/// Регіон за замовчуванням. Без нього `api_base_url` мовчки бере us-1,
-/// і EU-тенант отримує 401 на старті або реєструє хости не в ту хмару.
-const DEFAULT_CLOUD: &str = "eu-1";
-pub const DEFAULT_METADATA_TTL_MINUTES: u64 = 60;
-pub const DEFAULT_CACHE_MAX_BYTES: u64 = 21_474_836_480; // 20 ГіБ
-/// Каталог кешу для установки під systemd.
-pub const DEFAULT_SERVICE_CACHE_DIR: &str = "/var/cache/pike";
-
-/// Аргументи `pike serve`. Усі опційні — дефолти живуть у `resolve`,
-/// інакше значення за замовчуванням від clap стало б невідрізнюваним
-/// від явно переданого флага і завжди перебивало б конфіг.
-#[derive(Debug, Default, clap::Args)]
-pub struct ServeArgs {
-    /// Шлях до конфіг-файлу (типово /etc/pike/pike.toml, якщо існує)
-    #[arg(long)]
-    pub config: Option<PathBuf>,
-
-    /// Адреса, на якій слухати
-    #[arg(long)]
-    pub bind: Option<String>,
-
-    /// HTTP-порт
-    #[arg(long)]
-    pub port: Option<u16>,
-
-    /// Адреса, яку показувати в ванлайнерах (автовизначення, якщо не задано)
-    #[arg(long)]
-    pub addr: Option<String>,
-
-    /// Зовнішній URL (за reverse proxy), напр. https://pike.lab.local
-    #[arg(long)]
-    pub public_url: Option<String>,
-
-    /// Токен автентифікації (генерується, якщо не задано)
-    #[arg(long, env = "PIKE_TOKEN", hide_env_values = true)]
-    pub token: Option<String>,
-
-    /// Таймаут у хвилинах, 0 = без обмеження
-    #[arg(long)]
-    pub timeout: Option<u64>,
-
-    /// Ліміт завантажень сенсорів, 0 = без обмеження
-    #[arg(long)]
-    pub max_downloads: Option<u32>,
-
-    /// CrowdStrike API Client ID
-    #[arg(long, env = "PIKE_CLIENT_ID", hide_env_values = true)]
-    pub client_id: Option<String>,
-
-    /// CrowdStrike API Client Secret
-    #[arg(long, env = "PIKE_CLIENT_SECRET", hide_env_values = true)]
-    pub client_secret: Option<String>,
-
-    /// Хмара: us-1, us-2, eu-1, us-gov-1, us-gov-2
-    #[arg(long)]
-    pub cloud: Option<String>,
-
-    /// CrowdStrike Customer ID
-    #[arg(long, env = "PIKE_CID", hide_env_values = true)]
-    pub cid: Option<String>,
-
-    /// Каталог кешу сенсорів
-    #[arg(long)]
-    pub cache_dir: Option<PathBuf>,
-
-    /// Час життя списку сенсорів у хвилинах
-    #[arg(long)]
-    pub metadata_ttl: Option<u64>,
-
-    /// Максимальний розмір кешу в байтах
-    #[arg(long)]
-    pub cache_max_bytes: Option<u64>,
-
-    /// Теги групування, через кому
-    #[arg(long)]
-    pub tags: Option<String>,
-
-    /// Не додавати типовий тег deployment/pike
-    #[arg(long)]
-    pub no_default_tag: bool,
-
-    /// Локальний файл сенсора; можна вказати кілька разів
-    #[arg(long = "sensor")]
-    pub sensors: Vec<PathBuf>,
-
-    /// Вимкнути автентифікацію за токеном
-    #[arg(long)]
-    pub no_auth: bool,
-}
-
-impl ServeArgs {
-    /// Розбір лише для тестів — дає доступ до логіки clap разом із env.
-    #[cfg(test)]
-    pub fn parse_from_args(argv: &[&str]) -> Self {
-        // `derive(Args)` не дає CommandFactory — команду будуємо самі
-        use clap::{Args, FromArgMatches};
-        let cmd = <Self as Args>::augment_args(clap::Command::new("pike"));
-        let matches = cmd.get_matches_from(argv);
-        Self::from_arg_matches(&matches).expect("valid args")
-    }
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FileConfig {
-    #[serde(default)]
-    pub server: ServerSection,
-    #[serde(default)]
-    pub falcon: FalconSection,
-    #[serde(default)]
-    pub sensors: SensorsSection,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ServerSection {
-    pub bind: Option<String>,
-    pub port: Option<u16>,
-    pub addr: Option<String>,
-    pub public_url: Option<String>,
-    pub token: Option<String>,
-    pub timeout_minutes: Option<u64>,
-    pub max_downloads: Option<u32>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FalconSection {
-    pub client_id: Option<String>,
-    pub client_secret: Option<String>,
-    pub cloud: Option<String>,
-    pub cid: Option<String>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SensorsSection {
-    pub cache_dir: Option<PathBuf>,
-    pub metadata_ttl_minutes: Option<u64>,
-    pub cache_max_bytes: Option<u64>,
-    pub tags: Option<String>,
-    pub default_tag: Option<bool>,
-    pub files: Option<Vec<PathBuf>>,
-}
-
+/// Конфіг після злиття всіх джерел. Далі по коду читається лише він —
+/// жоден модуль не заглядає ні в аргументи, ні у файл.
 #[derive(Debug, Clone)]
 pub struct ResolvedConfig {
     pub bind: String,
@@ -177,48 +31,9 @@ pub struct ResolvedConfig {
     pub files: Vec<PathBuf>,
 }
 
-/// Каталог кешу за замовчуванням для запуску не під systemd.
-/// Сервісний конфіг завжди задає шлях явно.
-pub fn default_cache_dir() -> PathBuf {
-    if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
-        if !xdg.trim().is_empty() {
-            return PathBuf::from(xdg).join("pike");
-        }
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        if !home.trim().is_empty() {
-            return PathBuf::from(home).join(".cache").join("pike");
-        }
-    }
-    std::env::temp_dir().join("pike-cache")
-}
-
-pub fn load_file(path: &Path) -> Result<FileConfig, AppError> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| AppError::io(format!("Cannot read config '{}'", path.display()), e))?;
-    toml::from_str(&text)
-        .map_err(|e| AppError::Other(format!("Invalid config '{}': {e}", path.display())))
-}
-
 /// Порожній рядок у TOML означає «не задано».
 fn blank_to_none(v: Option<String>) -> Option<String> {
     v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
-}
-
-/// Токен потрапляє в шлях URL — дозволені лише безпечні там символи.
-pub fn validate_token(token: &str) -> Result<(), AppError> {
-    let ok = !token.is_empty()
-        && token.len() <= 128
-        && token
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'));
-    if ok {
-        Ok(())
-    } else {
-        Err(AppError::Other(format!(
-            "Invalid token '{token}': use 1-128 chars from [A-Za-z0-9_-]"
-        )))
-    }
 }
 
 pub fn resolve(args: &ServeArgs, file: FileConfig) -> Result<ResolvedConfig, AppError> {
@@ -447,13 +262,5 @@ mod tests {
         file.sensors.default_tag = Some(true);
         let cfg = resolve(&args, file).unwrap();
         assert!(!cfg.default_tag);
-    }
-
-    // --- розбір файлу ---
-
-    #[test]
-    fn unknown_key_is_an_error() {
-        let err = toml::from_str::<FileConfig>("[server]\nnonsense = 1\n");
-        assert!(err.is_err());
     }
 }

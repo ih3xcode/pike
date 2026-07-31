@@ -1,5 +1,4 @@
-use crate::falcon_api::SensorMeta;
-use crate::types::{Sensor, SensorType};
+use super::types::{Sensor, SensorMeta, SensorType};
 
 /// Map host distro (from /etc/os-release ID) + version to the CrowdStrike
 /// distro tag used in RPM filenames (e.g. "el9", "suse15", "amzn2023").

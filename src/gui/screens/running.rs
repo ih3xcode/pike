@@ -3,14 +3,13 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::types::{AppState, HostStatus};
+use crate::gui::persist::SavedConfig;
+use crate::gui::theme::*;
+use crate::gui::widgets::*;
+use crate::gui::Action;
+use crate::server::state::{AppState, HostStatus};
 
-use super::config::SavedConfig;
-use super::theme::*;
-use super::widgets::*;
-use super::Action;
-
-pub(super) struct RunningState {
+pub(crate) struct RunningState {
     pub app_state: Arc<AppState>,
     pub started_at: Instant,
     pub timeout_minutes: u64,
@@ -21,7 +20,7 @@ pub(super) struct RunningState {
     pub has_api: bool,
 }
 
-pub(super) fn draw_running(ctx: &egui::Context, running: &mut RunningState) -> Action {
+pub(crate) fn draw_running(ctx: &egui::Context, running: &mut RunningState) -> Action {
     let state = &running.app_state;
     let elapsed = running.started_at.elapsed();
     let downloads = state.download_count.load(Ordering::Relaxed);

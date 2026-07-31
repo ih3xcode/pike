@@ -1,23 +1,9 @@
 use std::sync::{atomic::AtomicU32, Arc, Mutex};
 use tokio::sync::Notify;
 
-use crate::falcon_api::FalconClient;
+use crate::sensors::{BinaryStore, MetadataCache, Sensor};
 
 const MAX_HOSTS: usize = 10_000;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SensorType {
-    Deb,
-    Rpm,
-    WindowsExe,
-}
-
-pub struct Sensor {
-    pub filename: String,
-    pub data: bytes::Bytes,
-    pub sha256: String,
-    pub sensor_type: SensorType,
-}
 
 #[derive(Debug, Clone)]
 pub enum HostStatus {
@@ -59,6 +45,9 @@ pub struct HostEntry {
     pub time: chrono::DateTime<chrono::Local>,
 }
 
+/// Спільний стан сервера. Обидва кеші тримають `Arc<dyn …>` всередині,
+/// тому тут немає ні параметрів типу, ні згадки про CrowdStrike —
+/// стан можна зібрати з підробних джерел прямо в тесті.
 pub struct AppState {
     pub token: Option<String>,
     pub cid: String,
@@ -70,8 +59,8 @@ pub struct AppState {
     /// сюди навмисно не потрапляє, інакше перша завантажена версія
     /// назавжди перебивала б свіжі метадані.
     pub local_sensors: Vec<Sensor>,
-    pub metadata: Option<Arc<crate::sensor_store::MetadataCache<FalconClient>>>,
-    pub store: Option<Arc<crate::sensor_store::BinaryStore<FalconClient>>>,
+    pub metadata: Option<Arc<MetadataCache>>,
+    pub store: Option<Arc<BinaryStore>>,
     pub download_count: AtomicU32,
     pub max_downloads: u32,
     pub shutdown_notify: Arc<Notify>,
@@ -99,20 +88,46 @@ impl AppState {
             entry.time = chrono::Local::now();
         }
     }
+
+    /// Базовий URL для ванлайнера, побудований з Host-заголовка запиту.
+    pub fn base_url_with_host(&self, host: &str) -> String {
+        match &self.token {
+            Some(t) => format!("http://{}/{}", host, t),
+            None => format!("http://{}", host),
+        }
+    }
+
+    /// Базовий URL з конфігурації: `public_url`, якщо заданий, інакше
+    /// оголошена адреса й порт.
+    pub fn base_url(&self) -> String {
+        if let Some(url) = &self.public_url {
+            let base = url.trim_end_matches('/');
+            match &self.token {
+                Some(t) => format!("{}/{}", base, t),
+                None => base.to_string(),
+            }
+        } else {
+            match &self.token {
+                Some(t) => format!("http://{}:{}/{}", self.addr, self.port, t),
+                None => format!("http://{}:{}", self.addr, self.port),
+            }
+        }
+    }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod test_support {
     use super::*;
 
-    fn test_app_state() -> Arc<AppState> {
-        Arc::new(AppState {
-            token: None,
+    /// Мінімальний стан для тестів: без сенсорів, без API, без лімітів.
+    pub(crate) fn state(token: Option<&str>, public_url: Option<&str>) -> AppState {
+        AppState {
+            token: token.map(|s| s.to_string()),
             cid: String::new(),
             cloud: None,
-            addr: "127.0.0.1".into(),
+            addr: "10.0.0.1".into(),
             port: 8080,
-            public_url: None,
+            public_url: public_url.map(|s| s.to_string()),
             local_sensors: vec![],
             metadata: None,
             store: None,
@@ -121,8 +136,14 @@ mod tests {
             shutdown_notify: Arc::new(Notify::new()),
             hosts: Mutex::new(vec![]),
             tags: None,
-        })
+        }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_support::state;
+    use super::*;
 
     fn test_host(hostname: &str) -> HostEntry {
         HostEntry {
@@ -139,7 +160,7 @@ mod tests {
 
     #[test]
     fn push_host_single() {
-        let state = test_app_state();
+        let state = state(None, None);
         state.push_host(test_host("host1"));
         let hosts = state.hosts.lock().unwrap();
         assert_eq!(hosts.len(), 1);
@@ -148,7 +169,7 @@ mod tests {
 
     #[test]
     fn push_host_eviction_at_max() {
-        let state = test_app_state();
+        let state = state(None, None);
         for i in 0..TEST_MAX_HOSTS {
             state.push_host(test_host(&format!("host{i}")));
         }
@@ -169,7 +190,7 @@ mod tests {
 
     #[test]
     fn update_host_status_found() {
-        let state = test_app_state();
+        let state = state(None, None);
         state.push_host(test_host("myhost"));
         state.update_host_status("myhost", HostStatus::Installed);
         let hosts = state.hosts.lock().unwrap();
@@ -178,7 +199,7 @@ mod tests {
 
     #[test]
     fn update_host_status_updates_latest() {
-        let state = test_app_state();
+        let state = state(None, None);
         state.push_host(test_host("myhost"));
         state.push_host(test_host("myhost"));
         state.update_host_status("myhost", HostStatus::SensorReady);
@@ -189,7 +210,7 @@ mod tests {
 
     #[test]
     fn update_host_status_missing_noop() {
-        let state = test_app_state();
+        let state = state(None, None);
         state.push_host(test_host("host1"));
         state.update_host_status("nonexistent", HostStatus::Installed);
         let hosts = state.hosts.lock().unwrap();
@@ -204,5 +225,54 @@ mod tests {
         assert_eq!(HostStatus::SensorReady.icon(), "◐");
         assert_eq!(HostStatus::Installed.icon(), "●");
         assert_eq!(HostStatus::Failed("err".into()).icon(), "✕");
+    }
+
+    // --- base_url ---
+
+    #[test]
+    fn base_url_no_token_no_public() {
+        assert_eq!(state(None, None).base_url(), "http://10.0.0.1:8080");
+    }
+
+    #[test]
+    fn base_url_with_token() {
+        assert_eq!(
+            state(Some("abc123"), None).base_url(),
+            "http://10.0.0.1:8080/abc123"
+        );
+    }
+
+    #[test]
+    fn base_url_with_public_url() {
+        assert_eq!(
+            state(None, Some("https://deploy.example.com")).base_url(),
+            "https://deploy.example.com"
+        );
+    }
+
+    #[test]
+    fn base_url_public_url_with_token() {
+        assert_eq!(
+            state(Some("tok"), Some("https://deploy.example.com/")).base_url(),
+            "https://deploy.example.com/tok"
+        );
+    }
+
+    // --- base_url_with_host ---
+
+    #[test]
+    fn base_url_with_host_no_token() {
+        assert_eq!(
+            state(None, None).base_url_with_host("myhost:9090"),
+            "http://myhost:9090"
+        );
+    }
+
+    #[test]
+    fn base_url_with_host_and_token() {
+        assert_eq!(
+            state(Some("t0k"), None).base_url_with_host("myhost:9090"),
+            "http://myhost:9090/t0k"
+        );
     }
 }
