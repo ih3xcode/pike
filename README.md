@@ -132,6 +132,24 @@ irm http://<server>:<port>/<token>/win | iex
 
 Without auth (`--no-auth`), the `/<token>` prefix is omitted.
 
+## Running as a service
+
+On Linux with systemd:
+
+```
+sudo pike service-install
+```
+
+The wizard asks for API credentials, validates them against the CrowdStrike API,
+then creates a `pike` system user, writes `/etc/pike/pike.toml` (mode 0640),
+prepares `/var/cache/pike`, installs a hardened unit and starts it.
+
+Remove it with `sudo pike service-uninstall` (add `--purge` to also drop the
+config, cache and user).
+
+Auto-updates are off by default. When enabled, a separate `pike-update.timer`
+runs weekly as root — the service itself never rewrites its own binary.
+
 ## Updating
 
 Check for updates:
