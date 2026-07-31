@@ -1,7 +1,12 @@
 pub mod units;
 
 #[cfg(target_os = "linux")]
+pub mod apply;
+#[cfg(target_os = "linux")]
 pub mod wizard;
+
+#[cfg(target_os = "linux")]
+pub use apply::{install, uninstall};
 
 #[cfg(not(target_os = "linux"))]
 pub fn install() -> Result<(), i32> {

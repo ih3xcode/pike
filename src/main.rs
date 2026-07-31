@@ -39,6 +39,14 @@ enum Command {
         #[arg(long)]
         apply: bool,
     },
+    /// Встановити pike як systemd-сервіс (Linux, потребує root)
+    ServiceInstall,
+    /// Видалити systemd-сервіс
+    ServiceUninstall {
+        /// Також видалити конфіг, кеш і системного користувача
+        #[arg(long)]
+        purge: bool,
+    },
 }
 
 fn main() {
@@ -63,6 +71,16 @@ fn main() {
         }
         Some(Command::Serve(args)) => {
             if let Err(code) = run_serve(args) {
+                std::process::exit(code);
+            }
+        }
+        Some(Command::ServiceInstall) => {
+            if let Err(code) = service::install() {
+                std::process::exit(code);
+            }
+        }
+        Some(Command::ServiceUninstall { purge }) => {
+            if let Err(code) = service::uninstall(purge) {
                 std::process::exit(code);
             }
         }

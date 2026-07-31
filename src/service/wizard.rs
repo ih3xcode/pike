@@ -17,7 +17,6 @@ pub struct Answers {
     pub cache_dir: String,
     pub metadata_ttl_minutes: u64,
     pub cache_max_bytes: u64,
-    pub enable_auto_update: bool,
 }
 
 pub struct InstallPlan {
@@ -208,7 +207,6 @@ pub fn run() -> Result<InstallPlan, String> {
         cache_dir: cache_dir.clone(),
         metadata_ttl_minutes: 60,
         cache_max_bytes: 21_474_836_480,
-        enable_auto_update,
     };
 
     let host = public_url.unwrap_or_else(|| {
@@ -251,7 +249,6 @@ mod tests {
             cache_dir: "/var/cache/pike".into(),
             metadata_ttl_minutes: 60,
             cache_max_bytes: 21_474_836_480,
-            enable_auto_update: false,
         }
     }
 
