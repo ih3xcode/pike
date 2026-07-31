@@ -175,6 +175,30 @@ fn print_banner(
     eprintln!();
 }
 
+/// Автентифікація на старті з обмеженою кількістю спроб.
+/// Повертає None, якщо API так і не відповів — це не привід падати,
+/// доки CID відомий: кеш на диску переживає рестарти.
+async fn authenticate_at_startup(
+    client_id: &str,
+    client_secret: &str,
+    cloud: Option<&str>,
+) -> Option<falcon_api::FalconClient> {
+    const DELAYS_SECS: [u64; 2] = [5, 10];
+    for attempt in 0..=DELAYS_SECS.len() {
+        match falcon_api::FalconClient::new(client_id, client_secret, cloud).await {
+            Ok(client) => return Some(client),
+            Err(e) => {
+                eprintln!("[falcon] Authentication attempt {} failed: {e}", attempt + 1);
+                if let Some(delay) = DELAYS_SECS.get(attempt) {
+                    eprintln!("[falcon] Retrying in {delay}s...");
+                    tokio::time::sleep(std::time::Duration::from_secs(*delay)).await;
+                }
+            }
+        }
+    }
+    None
+}
+
 fn run_serve(args: config::ServeArgs) -> Result<(), i32> {
     // Конфіг: явний --config обовʼязково має існувати; типовий шлях — лише якщо є
     let file = match &args.config {
@@ -273,29 +297,37 @@ fn run_serve(args: config::ServeArgs) -> Result<(), i32> {
     let update_handle = rt.spawn(update::check_for_update());
 
     let (falcon_client, cid) = if has_api_creds {
-        let client_id = cfg.client_id.clone().unwrap();
-        let client_secret = cfg.client_secret.clone().unwrap();
-        let cloud = cfg.cloud.clone();
-        let explicit_cid = cfg.cid.clone();
+        let client = rt.block_on(authenticate_at_startup(
+            cfg.client_id.as_deref().unwrap(),
+            cfg.client_secret.as_deref().unwrap(),
+            cfg.cloud.as_deref(),
+        ));
 
-        let result: Result<_, error::AppError> = rt.block_on(async move {
-            let client =
-                falcon_api::FalconClient::new(&client_id, &client_secret, cloud.as_deref()).await?;
-            let api_cid = if explicit_cid.is_none() {
-                Some(client.get_ccid().await?)
-            } else {
-                None
-            };
-            Ok((client, api_cid))
-        });
-
-        match result {
-            Ok((client, api_cid)) => {
-                let cid = cfg.cid.clone().unwrap_or_else(|| api_cid.unwrap());
-                (Some(client), cid)
+        match (client, cfg.cid.clone()) {
+            // Явний CID — API про нього не питаємо
+            (Some(client), Some(cid)) => (Some(client), cid),
+            // CID беремо з API; якщо і це не вдалось — конфігурувати нічим
+            (Some(client), None) => match rt.block_on(client.get_ccid()) {
+                Ok(cid) => (Some(client), cid),
+                Err(e) => {
+                    eprintln!("ERROR: cannot determine CID from API: {e}");
+                    eprintln!(
+                        "HINT: set cid explicitly in the config to start without API access."
+                    );
+                    return Err(1);
+                }
+            },
+            // API недоступний, але CID відомий — працюємо з кешу
+            (None, Some(cid)) => {
+                eprintln!(
+                    "[init] WARNING: CrowdStrike API unavailable — \
+                     serving from disk cache and local files only"
+                );
+                (None, cid)
             }
-            Err(e) => {
-                eprintln!("ERROR: {e}");
+            // Ні API, ні CID — сервер не може віддати робочий скрипт
+            (None, None) => {
+                eprintln!("ERROR: API unavailable and no CID configured; nothing to serve.");
                 return Err(1);
             }
         }
@@ -310,6 +342,14 @@ fn run_serve(args: config::ServeArgs) -> Result<(), i32> {
         .map(|s| format!("  {} (SHA256: {})", s.filename, s.sha256))
         .collect();
     let has_api = falcon_client.is_some();
+
+    if let Err(e) = std::fs::create_dir_all(&cfg.cache_dir) {
+        eprintln!(
+            "ERROR: cannot create cache dir '{}': {e}",
+            cfg.cache_dir.display()
+        );
+        return Err(1);
+    }
 
     let falcon = falcon_client.map(Arc::new);
     let metadata = falcon.clone().map(|c| {
