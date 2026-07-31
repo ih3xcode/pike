@@ -16,7 +16,7 @@ pub fn router(state: Arc<AppState>) -> Router {
     let routes = Router::new()
         .route("/lin", get(install_sh))
         .route("/win", get(install_ps1))
-        .route("/s/{filename}", get(sensor_download))
+        .route("/s/{sha256}", get(sensor_download))
         .route("/cb", post(callback))
         .route("/done", post(done));
 

@@ -42,7 +42,7 @@ try {
 
     Write-Host "Downloading sensor..."
     try {
-        Invoke-WebRequest -Uri "{{BASE_URL}}/s/$fileName" -OutFile $sensorPath -UseBasicParsing
+        Invoke-WebRequest -Uri "{{BASE_URL}}/s/$sha256" -OutFile $sensorPath -UseBasicParsing
     } catch {
         $code = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { "unknown" }
         Write-Error "ERROR: Failed to download sensor (HTTP $code)."

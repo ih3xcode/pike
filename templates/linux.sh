@@ -52,7 +52,7 @@ if [ -z "$FILENAME" ] || [ -z "$SHA256" ]; then
 fi
 
 echo "Downloading sensor ($FILENAME)..."
-HTTP_CODE=$(curl -sS -o "$TMPDIR/$FILENAME" -w "%{http_code}" "{{BASE_URL}}/s/$FILENAME")
+HTTP_CODE=$(curl -sS -o "$TMPDIR/$FILENAME" -w "%{http_code}" "{{BASE_URL}}/s/$SHA256")
 
 if [ "$HTTP_CODE" -ne 200 ]; then
   echo "ERROR: Failed to download sensor (HTTP $HTTP_CODE)." >&2; exit 1

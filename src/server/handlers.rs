@@ -36,12 +36,12 @@ pub async fn install_ps1(
 pub async fn sensor_download(
     State(state): State<Arc<AppState>>,
     OriginalUri(uri): OriginalUri,
-    Path(filename): Path<String>,
+    Path(sha256): Path<String>,
     req: axum::extract::Request,
 ) -> Response {
     let remote = peer_addr(&req);
     let path = uri.path().to_string();
-    serve_sensor(&state, &filename, &remote, &path).await
+    serve_sensor(&state, &sha256, &remote, &path).await
 }
 
 pub async fn callback(
@@ -120,55 +120,82 @@ fn serve_install_ps1(
     resp
 }
 
-fn sanitize_filename(name: &str) -> String {
-    name.chars()
-        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
-        .collect()
+fn is_valid_sha256(s: &str) -> bool {
+    s.len() == 64 && s.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
 }
 
-async fn serve_sensor(
-    state: &AppState,
-    filename: &str,
-    remote: &str,
-    path: &str,
-) -> Response {
-    let Some(sensor) = state.local_sensors.iter().find(|s| s.filename == filename) else {
-        log_request("GET", path, remote, 404, "sensor not found");
-        return StatusCode::NOT_FOUND.into_response();
-    };
+async fn serve_sensor(state: &AppState, sha256: &str, remote: &str, path: &str) -> Response {
+    if !is_valid_sha256(sha256) {
+        log_request("GET", path, remote, 400, "malformed sha256");
+        return StatusCode::BAD_REQUEST.into_response();
+    }
 
     let count = state
         .download_count
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         + 1;
-
     let extra = if state.max_downloads > 0 {
         format!("download {}/{}", count, state.max_downloads)
     } else {
-        format!("download {}", count)
+        format!("download {count}")
     };
-    log_request("GET", path, remote, 200, &extra);
 
-    eprintln!("[sensor] Serving {} to {remote} ({} bytes)", sensor.filename, sensor.data.len());
-
-    if state.max_downloads > 0 && count >= state.max_downloads {
-        eprintln!("[server] Download limit reached ({count}/{}), shutting down", state.max_downloads);
-        state.shutdown_notify.notify_one();
+    // Локальні файли лежать у памʼяті, кешовані з API — на диску
+    if let Some(sensor) = state.local_sensors.iter().find(|s| s.sha256 == sha256) {
+        log_request("GET", path, remote, 200, &extra);
+        eprintln!(
+            "[sensor] Serving {} to {remote} ({} bytes)",
+            sensor.filename,
+            sensor.data.len()
+        );
+        maybe_stop(state, count);
+        return octet_stream(sensor.data.clone().into_response());
     }
 
-    // Bytes::clone() is O(1) — no full data copy
-    let mut resp = sensor.data.clone().into_response();
+    let Some(store) = &state.store else {
+        log_request("GET", path, remote, 404, "sensor not found");
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    let file_path = store.path_for(sha256);
+    let file = match tokio::fs::File::open(&file_path).await {
+        Ok(f) => f,
+        Err(_) => {
+            log_request("GET", path, remote, 404, "sensor not in cache");
+            return StatusCode::NOT_FOUND.into_response();
+        }
+    };
+    let size = file.metadata().await.map(|m| m.len()).unwrap_or(0);
+
+    log_request("GET", path, remote, 200, &extra);
+    eprintln!("[sensor] Serving {sha256} to {remote} ({size} bytes, from cache)");
+    maybe_stop(state, count);
+
+    let stream = tokio_util::io::ReaderStream::new(file);
+    let mut resp = axum::body::Body::from_stream(stream).into_response();
+    resp.headers_mut().insert(
+        "content-length",
+        HeaderValue::from_str(&size.to_string()).unwrap_or_else(|_| HeaderValue::from_static("0")),
+    );
+    octet_stream(resp)
+}
+
+fn octet_stream(mut resp: Response) -> Response {
     resp.headers_mut().insert(
         "content-type",
         HeaderValue::from_static("application/octet-stream"),
     );
-    let safe_name = sanitize_filename(&sensor.filename);
-    resp.headers_mut().insert(
-        "content-disposition",
-        HeaderValue::from_str(&format!("attachment; filename=\"{}\"", safe_name))
-            .unwrap_or_else(|_| HeaderValue::from_static("attachment")),
-    );
     resp
+}
+
+fn maybe_stop(state: &AppState, count: u32) {
+    if state.max_downloads > 0 && count >= state.max_downloads {
+        eprintln!(
+            "[server] Download limit reached ({count}/{}), shutting down",
+            state.max_downloads
+        );
+        state.shutdown_notify.notify_one();
+    }
 }
 
 // --- Callback parsing ---
@@ -517,27 +544,29 @@ mod tests {
         assert_eq!(result.hostname, "myhost");
     }
 
-    // --- sanitize_filename ---
+    // --- is_valid_sha256 ---
 
     #[test]
-    fn filename_normal() {
-        assert_eq!(sanitize_filename("falcon-sensor_7.0_amd64.deb"), "falcon-sensor_7.0_amd64.deb");
+    fn sha256_path_valid() {
+        assert!(is_valid_sha256(&"a".repeat(64)));
+        assert!(is_valid_sha256("0123456789abcdef".repeat(4).as_str()));
     }
 
     #[test]
-    fn filename_path_traversal() {
-        // Dots are allowed (for extensions), but '/' is stripped — no directory escape
-        assert_eq!(sanitize_filename("../../etc/passwd"), "....etcpasswd");
+    fn sha256_path_rejects_wrong_length() {
+        assert!(!is_valid_sha256(&"a".repeat(63)));
+        assert!(!is_valid_sha256(&"a".repeat(65)));
+        assert!(!is_valid_sha256(""));
     }
 
     #[test]
-    fn filename_spaces() {
-        assert_eq!(sanitize_filename("my file name.exe"), "myfilename.exe");
-    }
-
-    #[test]
-    fn filename_special_chars() {
-        assert_eq!(sanitize_filename("file;rm -rf /.exe"), "filerm-rf.exe");
+    fn sha256_path_rejects_traversal_and_non_hex() {
+        assert!(!is_valid_sha256("../../etc/passwd"));
+        assert!(
+            !is_valid_sha256(&"A".repeat(64)),
+            "верхній регістр не приймаємо"
+        );
+        assert!(!is_valid_sha256(&"g".repeat(64)));
     }
 }
 
