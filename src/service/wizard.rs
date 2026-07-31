@@ -107,6 +107,42 @@ fn prompt_allow_empty(label: &str) -> String {
     line.trim().to_string()
 }
 
+/// Питає, доки відповідь не пройде перевірку. Візард обіцяє, що все
+/// перевірене ще до першого запису на диск — інакше про помилку в токені
+/// чи bind дізнаєшся аж від `systemctl`, коли сервіс уже встановлено.
+fn prompt_valid<T>(
+    label: &str,
+    default: Option<&str>,
+    validate: impl Fn(&str) -> Result<T, String>,
+) -> T {
+    loop {
+        let raw = prompt(label, default);
+        match validate(&raw) {
+            Ok(v) => return v,
+            Err(e) => eprintln!("  ({e})"),
+        }
+    }
+}
+
+fn validate_bind(value: &str, port: u16) -> Result<String, String> {
+    // Перевіряємо рівно те, що робитиме сервер на старті
+    format!("{value}:{port}")
+        .parse::<std::net::SocketAddr>()
+        .map(|_| value.to_string())
+        .map_err(|_| format!("'{value}' is not an IP address pike can bind to"))
+}
+
+fn validate_cache_dir(value: &str) -> Result<String, String> {
+    if !value.starts_with('/') {
+        return Err("must be an absolute path".into());
+    }
+    // Пробіл розділив би значення в ReadWritePaths= і зламав юніт
+    if value.split_whitespace().count() != 1 {
+        return Err("must not contain whitespace".into());
+    }
+    Ok(value.to_string())
+}
+
 fn prompt_bool(label: &str, default: bool) -> bool {
     let hint = if default { "Y/n" } else { "y/N" };
     loop {
@@ -163,19 +199,25 @@ pub fn run() -> Result<InstallPlan, String> {
             Err(_) => eprintln!("  (not a valid port)"),
         }
     };
-    let bind = prompt("Bind address", Some("0.0.0.0"));
+    let bind = prompt_valid("Bind address", Some("0.0.0.0"), |v| validate_bind(v, port));
 
     eprintln!("\nDetected addresses:");
     let addrs = crate::util::detect_available_addrs();
     for (i, (label, _)) in addrs.iter().enumerate() {
         eprintln!("  {i}) {label}");
     }
-    let addr = {
+    let addr = loop {
         let raw = prompt_allow_empty("Advertised address — index or literal");
+        if raw.is_empty() {
+            break None;
+        }
+        // Число поза списком — це майже напевно помилка при виборі пункту,
+        // а не адреса; записати його як літерал означало б віддати хостам
+        // ванлайнер виду http://4:8080/<token>
         match raw.parse::<usize>() {
-            Ok(i) if i < addrs.len() => Some(addrs[i].1.clone()),
-            _ if raw.is_empty() => None,
-            _ => Some(raw),
+            Ok(i) if i < addrs.len() => break Some(addrs[i].1.clone()),
+            Ok(_) => eprintln!("  (no such index; pick 0-{})", addrs.len() - 1),
+            Err(_) => break Some(raw),
         }
     };
 
@@ -184,10 +226,18 @@ pub fn run() -> Result<InstallPlan, String> {
 
     let generated = crate::util::generate_token();
     eprintln!("\nGenerated token: {generated}");
-    let token = Some(prompt("Token", Some(&generated)));
+    let token = Some(prompt_valid("Token", Some(&generated), |v| {
+        crate::config::validate_token(v)
+            .map(|()| v.to_string())
+            .map_err(|e| e.to_string())
+    }));
 
     let tags = prompt_optional("Grouping tags, comma-separated");
-    let cache_dir = prompt("Cache directory", Some("/var/cache/pike"));
+    let cache_dir = prompt_valid(
+        "Cache directory",
+        Some(crate::config::DEFAULT_SERVICE_CACHE_DIR),
+        |v| validate_cache_dir(v),
+    );
     let enable_auto_update = prompt_bool(
         "\nEnable the weekly auto-update timer? (pike is 0.x and may introduce breaking changes)",
         false,
@@ -205,8 +255,8 @@ pub fn run() -> Result<InstallPlan, String> {
         token: token.clone(),
         tags,
         cache_dir: cache_dir.clone(),
-        metadata_ttl_minutes: 60,
-        cache_max_bytes: 21_474_836_480,
+        metadata_ttl_minutes: crate::config::DEFAULT_METADATA_TTL_MINUTES,
+        cache_max_bytes: crate::config::DEFAULT_CACHE_MAX_BYTES,
     };
 
     let host = public_url.unwrap_or_else(|| {
@@ -284,6 +334,35 @@ mod tests {
         assert!(!toml_text.contains("tags ="));
         // і згенероване все одно має розбиратись
         toml::from_str::<crate::config::FileConfig>(&toml_text).unwrap();
+    }
+
+    // --- валідація ---
+
+    #[test]
+    fn bind_accepts_addresses_the_server_can_parse() {
+        assert!(validate_bind("0.0.0.0", 8080).is_ok());
+        assert!(validate_bind("127.0.0.1", 8080).is_ok());
+    }
+
+    #[test]
+    fn bind_rejects_hostnames() {
+        // `localhost` пройшов би візард, але впав би на старті сервера
+        assert!(validate_bind("localhost", 8080).is_err());
+        assert!(validate_bind("", 8080).is_err());
+    }
+
+    #[test]
+    fn cache_dir_must_be_absolute_and_space_free() {
+        assert!(validate_cache_dir("/var/cache/pike").is_ok());
+        assert!(validate_cache_dir("var/cache/pike").is_err());
+        // Пробіл розділив би значення в ReadWritePaths=
+        assert!(validate_cache_dir("/var/cache/my pike").is_err());
+    }
+
+    #[test]
+    fn wizard_rejects_tokens_the_config_would_refuse() {
+        assert!(crate::config::validate_token("lab/token").is_err());
+        assert!(crate::config::validate_token("labtoken01").is_ok());
     }
 
     #[test]

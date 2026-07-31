@@ -76,10 +76,18 @@ fn install_binary() -> Result<(), String> {
         eprintln!("  binary already at {BIN_PATH}");
         return Ok(());
     }
-    std::fs::copy(&current, BIN_PATH)
-        .map_err(|e| format!("cannot copy binary to {BIN_PATH}: {e}"))?;
-    std::fs::set_permissions(BIN_PATH, std::fs::Permissions::from_mode(0o755))
-        .map_err(|e| format!("cannot chmod {BIN_PATH}: {e}"))?;
+    // Пряме копіювання поверх працюючого сервісу дало б ETXTBSY, тому
+    // пишемо поруч і перейменовуємо: rename над запущеним бінарем дозволений,
+    // старий інод живе, доки процес не завершиться
+    let staged = Path::new(BIN_PATH).with_extension("new");
+    std::fs::copy(&current, &staged)
+        .map_err(|e| format!("cannot stage binary at {}: {e}", staged.display()))?;
+    std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))
+        .map_err(|e| format!("cannot chmod {}: {e}", staged.display()))?;
+    if let Err(e) = std::fs::rename(&staged, BIN_PATH) {
+        let _ = std::fs::remove_file(&staged);
+        return Err(format!("cannot install binary at {BIN_PATH}: {e}"));
+    }
     eprintln!("  installed binary at {BIN_PATH}");
     Ok(())
 }
@@ -90,6 +98,26 @@ fn write_secure(path: &str, content: &str, mode: u32, owner: &str) -> Result<(),
         .map_err(|e| format!("cannot chmod {path}: {e}"))?;
     run_cmd("chown", &[owner, path])?;
     Ok(())
+}
+
+/// Вимикає й видаляє юніти автооновлення. Помилки не фатальні — юнітів
+/// може просто не бути.
+fn remove_update_units() {
+    let existed = Path::new(UPDATE_TIMER_PATH).exists() || Path::new(UPDATE_UNIT_PATH).exists();
+    let _ = Command::new("systemctl")
+        .args(["disable", "--now", "pike-update.timer"])
+        .status();
+    for path in [UPDATE_TIMER_PATH, UPDATE_UNIT_PATH] {
+        if Path::new(path).exists() {
+            match std::fs::remove_file(path) {
+                Ok(()) => eprintln!("  removed {path}"),
+                Err(e) => eprintln!("  WARNING: cannot remove {path}: {e}"),
+            }
+        }
+    }
+    if existed {
+        eprintln!("  auto-update timer disabled");
+    }
 }
 
 pub fn install() -> Result<(), i32> {
@@ -164,6 +192,11 @@ pub fn install() -> Result<(), i32> {
             std::fs::write(UPDATE_TIMER_PATH, update_timer())
                 .map_err(|e| format!("cannot write {UPDATE_TIMER_PATH}: {e}"))?;
             eprintln!("  wrote auto-update timer units");
+        } else {
+            // Переустановка з відмовою від автооновлення має вимкнути таймер,
+            // що лишився з попереднього разу — інакше root і далі щотижня
+            // переписував би бінар усупереч щойно висловленій волі
+            remove_update_units();
         }
 
         run_cmd("systemctl", &["daemon-reload"])?;
@@ -236,7 +269,7 @@ pub fn uninstall(purge: bool) -> Result<(), i32> {
         .ok()
         .and_then(|text| toml::from_str::<crate::config::FileConfig>(&text).ok())
         .and_then(|c| c.sensors.cache_dir)
-        .unwrap_or_else(|| std::path::PathBuf::from("/var/cache/pike"));
+        .unwrap_or_else(|| std::path::PathBuf::from(crate::config::DEFAULT_SERVICE_CACHE_DIR));
 
     if Path::new(CONFIG_DIR).exists() {
         match std::fs::remove_dir_all(CONFIG_DIR) {
