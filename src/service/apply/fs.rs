@@ -1,4 +1,4 @@
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::process::Command;
 
@@ -53,8 +53,26 @@ pub(super) fn install_binary() -> Result<(), String> {
     Ok(())
 }
 
+/// Writes a file that never exists with wider permissions than it should.
+/// `fs::write` would create it as 0666 & ~umask — typically 0644 — and the
+/// config it is used for holds `client_secret` and the token, so narrowing
+/// afterwards leaves a window.
 pub(super) fn write_secure(path: &str, content: &str, mode: u32, owner: &str) -> Result<(), String> {
-    std::fs::write(path, content).map_err(|e| format!("cannot write {path}: {e}"))?;
+    use std::io::Write;
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(mode)
+        .open(path)
+        .map_err(|e| format!("cannot create {path}: {e}"))?;
+    file.write_all(content.as_bytes())
+        .map_err(|e| format!("cannot write {path}: {e}"))?;
+    drop(file);
+
+    // Still set it explicitly: `mode` only applies when the file is created,
+    // and a re-install writes over one that already exists
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
         .map_err(|e| format!("cannot chmod {path}: {e}"))?;
     run_cmd("chown", &[owner, path])?;

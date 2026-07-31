@@ -1,38 +1,49 @@
 use std::io::{self, Write};
 
-pub(super) fn prompt(label: &str, default: Option<&str>) -> String {
+/// Every prompt fails rather than loops when stdin is exhausted. A question
+/// with no default used to spin forever on `pike service-install < /dev/null`
+/// — a busy loop that pegged a CPU and flooded stderr.
+const EOF: &str = "stdin is closed — 'pike service-install' needs an interactive terminal";
+
+fn read_answer() -> Result<Option<String>, String> {
+    let mut line = String::new();
+    match io::stdin().read_line(&mut line) {
+        Ok(0) => Ok(None),
+        Ok(_) => Ok(Some(line.trim().to_string())),
+        Err(e) => Err(format!("cannot read from stdin: {e}")),
+    }
+}
+
+pub(super) fn prompt(label: &str, default: Option<&str>) -> Result<String, String> {
     loop {
         match default {
             Some(d) => print!("{label} [{d}]: "),
             None => print!("{label}: "),
         }
         io::stdout().flush().ok();
-        let mut line = String::new();
-        if io::stdin().read_line(&mut line).is_err() {
-            continue;
-        }
-        let line = line.trim().to_string();
+
+        let Some(line) = read_answer()? else {
+            return Err(EOF.into());
+        };
         if !line.is_empty() {
-            return line;
+            return Ok(line);
         }
         if let Some(d) = default {
-            return d.to_string();
+            return Ok(d.to_string());
         }
         eprintln!("  (this one is required)");
     }
 }
 
-pub(super) fn prompt_optional(label: &str) -> Option<String> {
-    let v = prompt_allow_empty(label);
-    if v.is_empty() { None } else { Some(v) }
+pub(super) fn prompt_optional(label: &str) -> Result<Option<String>, String> {
+    let v = prompt_allow_empty(label)?;
+    Ok(if v.is_empty() { None } else { Some(v) })
 }
 
-pub(super) fn prompt_allow_empty(label: &str) -> String {
+pub(super) fn prompt_allow_empty(label: &str) -> Result<String, String> {
     print!("{label} (leave empty to skip): ");
     io::stdout().flush().ok();
-    let mut line = String::new();
-    io::stdin().read_line(&mut line).ok();
-    line.trim().to_string()
+    read_answer()?.ok_or_else(|| EOF.to_string())
 }
 
 /// Asks until the answer passes validation. The wizard promises everything
@@ -42,27 +53,29 @@ pub(super) fn prompt_valid<T>(
     label: &str,
     default: Option<&str>,
     validate: impl Fn(&str) -> Result<T, String>,
-) -> T {
+) -> Result<T, String> {
     loop {
-        let raw = prompt(label, default);
+        let raw = prompt(label, default)?;
         match validate(&raw) {
-            Ok(v) => return v,
+            Ok(v) => return Ok(v),
             Err(e) => eprintln!("  ({e})"),
         }
     }
 }
 
-pub(super) fn prompt_bool(label: &str, default: bool) -> bool {
+pub(super) fn prompt_bool(label: &str, default: bool) -> Result<bool, String> {
     let hint = if default { "Y/n" } else { "y/N" };
     loop {
         print!("{label} [{hint}]: ");
         io::stdout().flush().ok();
-        let mut line = String::new();
-        io::stdin().read_line(&mut line).ok();
-        match line.trim().to_lowercase().as_str() {
-            "" => return default,
-            "y" | "yes" => return true,
-            "n" | "no" => return false,
+
+        let Some(line) = read_answer()? else {
+            return Err(EOF.into());
+        };
+        match line.to_lowercase().as_str() {
+            "" => return Ok(default),
+            "y" | "yes" => return Ok(true),
+            "n" | "no" => return Ok(false),
             _ => eprintln!("  (answer y or n)"),
         }
     }

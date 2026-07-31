@@ -5,7 +5,7 @@ use crate::common::AppError;
 use super::args::ServeArgs;
 use super::defaults::*;
 use super::file::FileConfig;
-use super::validate::validate_token;
+use super::validate::{validate_cloud, validate_token};
 
 /// The config after all sources are merged. Nothing downstream reads
 /// anything else — no module looks at the arguments or the file directly.
@@ -31,7 +31,10 @@ pub struct ResolvedConfig {
     pub files: Vec<PathBuf>,
 }
 
-/// An empty string in TOML means "not set".
+/// An empty string means "not set", wherever it came from. Flags and env
+/// vars need this as much as the file does: clap hands back an env var's
+/// value verbatim, so `PIKE_CID=` in an EnvironmentFile used to produce a
+/// server that started happily and then 404-ed every install-script request.
 fn blank_to_none(v: Option<String>) -> Option<String> {
     v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
 }
@@ -40,9 +43,7 @@ pub fn resolve(args: &ServeArgs, file: FileConfig) -> Result<ResolvedConfig, App
     let token = if args.no_auth {
         None
     } else {
-        let t = args
-            .token
-            .clone()
+        let t = blank_to_none(args.token.clone())
             .or_else(|| blank_to_none(file.server.token.clone()));
         if let Some(ref t) = t {
             validate_token(t)?;
@@ -55,17 +56,18 @@ pub fn resolve(args: &ServeArgs, file: FileConfig) -> Result<ResolvedConfig, App
         files = file.sensors.files.clone().unwrap_or_default();
     }
 
+    let cloud = blank_to_none(args.cloud.clone())
+        .or_else(|| blank_to_none(file.falcon.cloud))
+        .unwrap_or_else(|| DEFAULT_CLOUD.to_string());
+    validate_cloud(&cloud)?;
+
     Ok(ResolvedConfig {
-        bind: args
-            .bind
-            .clone()
+        bind: blank_to_none(args.bind.clone())
             .or_else(|| blank_to_none(file.server.bind))
             .unwrap_or_else(|| DEFAULT_BIND.to_string()),
         port: args.port.or(file.server.port).unwrap_or(DEFAULT_PORT),
-        addr: args.addr.clone().or_else(|| blank_to_none(file.server.addr)),
-        public_url: args
-            .public_url
-            .clone()
+        addr: blank_to_none(args.addr.clone()).or_else(|| blank_to_none(file.server.addr)),
+        public_url: blank_to_none(args.public_url.clone())
             .or_else(|| blank_to_none(file.server.public_url))
             .map(|u| u.trim_end_matches('/').to_string()),
         auth_enabled: !args.no_auth,
@@ -78,20 +80,12 @@ pub fn resolve(args: &ServeArgs, file: FileConfig) -> Result<ResolvedConfig, App
             .max_downloads
             .or(file.server.max_downloads)
             .unwrap_or(DEFAULT_MAX_DOWNLOADS),
-        client_id: args
-            .client_id
-            .clone()
+        client_id: blank_to_none(args.client_id.clone())
             .or_else(|| blank_to_none(file.falcon.client_id)),
-        client_secret: args
-            .client_secret
-            .clone()
+        client_secret: blank_to_none(args.client_secret.clone())
             .or_else(|| blank_to_none(file.falcon.client_secret)),
-        cloud: args
-            .cloud
-            .clone()
-            .or_else(|| blank_to_none(file.falcon.cloud))
-            .or_else(|| Some(DEFAULT_CLOUD.to_string())),
-        cid: args.cid.clone().or_else(|| blank_to_none(file.falcon.cid)),
+        cloud: Some(cloud),
+        cid: blank_to_none(args.cid.clone()).or_else(|| blank_to_none(file.falcon.cid)),
         cache_dir: args
             .cache_dir
             .clone()
@@ -105,10 +99,7 @@ pub fn resolve(args: &ServeArgs, file: FileConfig) -> Result<ResolvedConfig, App
             .cache_max_bytes
             .or(file.sensors.cache_max_bytes)
             .unwrap_or(DEFAULT_CACHE_MAX_BYTES),
-        tags: args
-            .tags
-            .clone()
-            .or_else(|| blank_to_none(file.sensors.tags)),
+        tags: blank_to_none(args.tags.clone()).or_else(|| blank_to_none(file.sensors.tags)),
         default_tag: if args.no_default_tag {
             false
         } else {
@@ -250,6 +241,52 @@ mod tests {
         let cfg = resolve(&args, file).unwrap();
         assert!(!cfg.auth_enabled);
         assert!(cfg.token.is_none());
+    }
+
+    // --- blank flag and env values ---
+
+    #[test]
+    fn blank_env_values_are_treated_as_unset() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { std::env::set_var("PIKE_CID", "") };
+        unsafe { std::env::set_var("PIKE_TOKEN", "") };
+
+        let args = ServeArgs::parse_from_args(&["pike"]);
+        let cfg = resolve(&args, FileConfig::default()).unwrap();
+
+        // Previously `Some("")`: the server started and then 404-ed /lin
+        assert!(cfg.cid.is_none());
+        // and an empty token failed validation instead of being ignored
+        assert!(cfg.token.is_none());
+
+        unsafe { std::env::remove_var("PIKE_CID") };
+        unsafe { std::env::remove_var("PIKE_TOKEN") };
+    }
+
+    #[test]
+    fn blank_flag_value_falls_through_to_the_file() {
+        let mut args = empty_args();
+        args.cid = Some("   ".into());
+        let mut file = FileConfig::default();
+        file.falcon.cid = Some("FROM-FILE".into());
+        let cfg = resolve(&args, file).unwrap();
+        assert_eq!(cfg.cid.as_deref(), Some("FROM-FILE"));
+    }
+
+    // --- cloud ---
+
+    #[test]
+    fn unknown_cloud_is_an_error() {
+        let mut args = empty_args();
+        args.cloud = Some("eu1".into());
+        assert!(resolve(&args, FileConfig::default()).is_err());
+    }
+
+    #[test]
+    fn unknown_cloud_in_the_file_is_an_error() {
+        let mut file = FileConfig::default();
+        file.falcon.cloud = Some("europe".into());
+        assert!(resolve(&empty_args(), file).is_err());
     }
 
     // --- tags ---

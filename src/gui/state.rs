@@ -3,7 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::common::net::detect_available_addrs;
 
-pub const CLOUD_OPTIONS: &[&str] = &["us-1", "us-2", "eu-1", "us-gov-1", "us-gov-2"];
+/// The picker offers exactly what the config layer accepts.
+pub(super) use crate::config::validate::CLOUDS as CLOUD_OPTIONS;
 
 /// Everything editable on the configuration screen. Lives exactly as long
 /// as the screen is shown; whatever must survive a server restart is copied
