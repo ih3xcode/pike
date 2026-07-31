@@ -1,4 +1,4 @@
-//! HTTP-сервер розгортання: стан, маршрути й хендлери.
+//! The deployment HTTP server: state, routes and handlers.
 
 pub mod handlers;
 pub mod helpers;

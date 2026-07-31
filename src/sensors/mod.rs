@@ -1,9 +1,9 @@
-//! Усе, що стосується сенсорів: їхні типи, зіставлення з хостом,
-//! завантаження локальних файлів і два кеші поверх зовнішнього джерела.
+//! Everything about sensors: their types, matching against a host, loading
+//! local files, and two caches over an external source.
 //!
-//! Джерело описане тут же — трейтами в [`ports`]. Реалізацію дає `falcon`,
-//! тому залежність іде лише в один бік: `falcon` знає про `sensors`,
-//! `sensors` про `falcon` — ні.
+//! That source is described right here, by the traits in [`ports`]. `falcon`
+//! provides the implementation, so the dependency runs one way only:
+//! `falcon` knows about `sensors`, `sensors` knows nothing about `falcon`.
 
 pub mod binary_store;
 pub mod loading;

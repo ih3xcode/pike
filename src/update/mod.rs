@@ -1,5 +1,5 @@
-//! Самооновлення з GitHub Releases: перевірка нової версії, звірка
-//! контрольної суми і заміна власного бінаря.
+//! Self-update from GitHub Releases: checking for a new version, verifying
+//! the checksum and replacing our own binary.
 
 pub mod apply;
 pub mod check;

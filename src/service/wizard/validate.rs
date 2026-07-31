@@ -1,5 +1,5 @@
 pub(super) fn validate_bind(value: &str, port: u16) -> Result<String, String> {
-    // Перевіряємо рівно те, що робитиме сервер на старті
+    // Check exactly what the server will do at startup
     format!("{value}:{port}")
         .parse::<std::net::SocketAddr>()
         .map(|_| value.to_string())
@@ -10,7 +10,7 @@ pub(super) fn validate_cache_dir(value: &str) -> Result<String, String> {
     if !value.starts_with('/') {
         return Err("must be an absolute path".into());
     }
-    // Пробіл розділив би значення в ReadWritePaths= і зламав юніт
+    // A space would split the value in ReadWritePaths= and break the unit
     if value.split_whitespace().count() != 1 {
         return Err("must not contain whitespace".into());
     }
@@ -29,7 +29,7 @@ mod tests {
 
     #[test]
     fn bind_rejects_hostnames() {
-        // `localhost` пройшов би візард, але впав би на старті сервера
+        // `localhost` would pass the wizard but fail when the server starts
         assert!(validate_bind("localhost", 8080).is_err());
         assert!(validate_bind("", 8080).is_err());
     }
@@ -38,7 +38,7 @@ mod tests {
     fn cache_dir_must_be_absolute_and_space_free() {
         assert!(validate_cache_dir("/var/cache/pike").is_ok());
         assert!(validate_cache_dir("var/cache/pike").is_err());
-        // Пробіл розділив би значення в ReadWritePaths=
+        // A space would split the value in ReadWritePaths=
         assert!(validate_cache_dir("/var/cache/my pike").is_err());
     }
 

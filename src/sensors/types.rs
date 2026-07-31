@@ -7,7 +7,7 @@ pub enum SensorType {
     WindowsExe,
 }
 
-/// Локальний файл сенсора, прочитаний у памʼять на старті.
+/// A local sensor file, read into memory at startup.
 pub struct Sensor {
     pub filename: String,
     pub data: bytes::Bytes,
@@ -15,9 +15,10 @@ pub struct Sensor {
     pub sensor_type: SensorType,
 }
 
-/// Запис зі списку доступних сенсорів. Формат полів диктує CrowdStrike API,
-/// але тип живе тут, а не в `falcon`: інакше кеші й зіставлення залежали б
-/// від клієнта, а клієнт — від них.
+/// An entry from the list of available sensors. The field shapes come from
+/// the CrowdStrike API, but the type lives here rather than in `falcon`:
+/// otherwise the caches and matching would depend on the client, and the
+/// client on them.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SensorMeta {
     pub name: String,

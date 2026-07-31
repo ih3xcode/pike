@@ -1,4 +1,4 @@
-/// Приймає як голий hex, так і формат `sha256sum`: "<hex>  <filename>".
+/// Accepts both bare hex and the `sha256sum` format: "<hex>  <filename>".
 pub fn verify_asset(data: &[u8], expected: &str) -> Result<(), String> {
     let expected_hex = expected
         .split_whitespace()
@@ -39,7 +39,7 @@ mod tests {
 
     #[test]
     fn verify_accepts_sha256sum_file_format() {
-        // GNU sha256sum пише "<hex>  <filename>"
+        // GNU sha256sum writes "<hex>  <filename>"
         let data = b"binary contents";
         let line = format!("{}  pike-linux-amd64\n", sha256_of(data));
         assert!(verify_asset(data, &line).is_ok());

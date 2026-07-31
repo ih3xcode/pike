@@ -5,9 +5,9 @@ use tokio::sync::RwLock;
 
 use crate::common::error::AppError;
 
-/// Таймаути на метадані. Завантаження сенсора свідомо без загального
-/// таймауту — це сотні мегабайтів, які на повільному каналі йдуть довго;
-/// його захищає лише таймаут з'єднання.
+/// Timeouts for metadata calls. Downloading a sensor deliberately has no
+/// total timeout — it is hundreds of megabytes that take a long time on a
+/// slow link; only the connect timeout guards it.
 pub(super) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub(super) const METADATA_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -37,9 +37,9 @@ struct TokenState {
     expires_at: Instant,
 }
 
-/// Тримає базовий URL, креденшели й чинний токен. Оновлює його самостійно
-/// за 60 секунд до фактичного протермінування, тож виклики ендпоінтів
-/// про строк життя токена не думають.
+/// Holds the base URL, the credentials and the current token. Refreshes it
+/// on its own 60 seconds before it actually expires, so endpoint calls never
+/// have to think about the token's lifetime.
 pub(super) struct Authenticator {
     base_url: String,
     client_id: String,
@@ -74,7 +74,7 @@ impl Authenticator {
         &self.base_url
     }
 
-    /// Чинний access token; оновлює його, якщо строк вийшов.
+    /// A valid access token, refreshed when the current one has expired.
     pub(super) async fn access_token(&self, http: &reqwest::Client) -> Result<String, AppError> {
         {
             let state = self.token.read().await;
@@ -87,7 +87,7 @@ impl Authenticator {
 
     async fn refresh(&self, http: &reqwest::Client) -> Result<String, AppError> {
         let mut state = self.token.write().await;
-        // Ще раз перевіряємо: поки чекали на лок, оновити міг хтось інший
+        // Check again: another task may have refreshed while we waited for the lock
         if Instant::now() < state.expires_at {
             return Ok(state.access_token.clone());
         }
@@ -103,7 +103,7 @@ impl Authenticator {
     }
 }
 
-/// OAuth2 client_credentials; повертає (access_token, момент протермінування).
+/// OAuth2 client_credentials; returns (access_token, expiry instant).
 async fn do_oauth2(
     http: &reqwest::Client,
     base_url: &str,
@@ -129,7 +129,7 @@ async fn do_oauth2(
         .await
         .map_err(|e| AppError::http("Failed to parse OAuth2 response", e))?;
 
-    // Оновлюємось за 60 секунд до фактичного протермінування
+    // Refresh 60 seconds before the actual expiry
     let expires_at = Instant::now() + Duration::from_secs(oauth.expires_in.saturating_sub(60));
     Ok((oauth.access_token, expires_at))
 }

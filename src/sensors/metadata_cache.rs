@@ -9,8 +9,8 @@ use crate::common::error::AppError;
 use super::ports::SensorLister;
 use super::types::SensorMeta;
 
-/// Мінімальна пауза між спробами після невдачі. Без неї при недоступному
-/// API кожен запит /cb платив би повний мережевий таймаут.
+/// Minimum pause between attempts after a failure. Without it, every /cb
+/// request would pay the full network timeout while the API is unreachable.
 const RETRY_AFTER_FAILURE: Duration = Duration::from_secs(60);
 
 struct Snapshot {
@@ -21,16 +21,17 @@ struct Snapshot {
 #[derive(Default)]
 struct CacheState {
     snapshots: HashMap<String, Snapshot>,
-    /// Коли востаннє провалився запит по платформі. Живе окремо від знімків
-    /// навмисно: на холодному старті знімка ще немає, а саме тоді пауза між
-    /// спробами й потрібна найбільше.
+    /// When the last request for a platform failed. Kept separate from the
+    /// snapshots on purpose: on a cold start there is no snapshot yet, and
+    /// that is exactly when the retry pause matters most.
     failures: HashMap<String, Instant>,
 }
 
-/// Список сенсорів з API зі скінченним часом життя.
+/// The API sensor list with a finite lifetime.
 ///
-/// Свіжість тут — головний захист від застигання версій: матчинг завжди
-/// відбувається по актуальному списку, а не по тому, що колись потрапило в кеш.
+/// Freshness here is the main guard against versions freezing: matching
+/// always runs against the current list, not against whatever once landed
+/// in the cache.
 pub struct MetadataCache {
     lister: Arc<dyn SensorLister>,
     ttl: Duration,
@@ -47,8 +48,8 @@ impl MetadataCache {
     }
 
     pub async fn get(&self, platform: &str) -> Result<Vec<SensorMeta>, AppError> {
-        // Лок тримається через await навмисно: це серіалізує паралельні
-        // оновлення одного платформного списку в один запит до API.
+        // The lock is deliberately held across the await: it collapses
+        // concurrent refreshes of one platform's list into a single API call.
         let mut guard = self.state.lock().await;
         let now = Instant::now();
 
@@ -58,8 +59,8 @@ impl MetadataCache {
             }
         }
 
-        // Недавня невдача — не б'ємо по API повторно незалежно від того,
-        // чи є що віддати з кешу
+        // A recent failure — do not hit the API again, whether or not there
+        // is something in the cache to serve
         if let Some(failed_at) = guard.failures.get(platform) {
             if now.duration_since(*failed_at) < RETRY_AFTER_FAILURE {
                 return match guard.snapshots.get(platform) {
@@ -185,7 +186,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn serves_stale_snapshot_when_api_fails() {
-        let lister = FakeLister::new(1); // перший виклик успішний, далі помилки
+        let lister = FakeLister::new(1); // first call succeeds, the rest fail
         let cache = cache_with(lister.clone(), 60);
 
         cache.get("linux").await.unwrap();
@@ -203,8 +204,8 @@ mod tests {
 
         cache.get("linux").await.unwrap();
         tokio::time::advance(Duration::from_secs(61)).await;
-        cache.get("linux").await.unwrap(); // невдача, віддає застаріле
-        cache.get("linux").await.unwrap(); // не має бити по API знову
+        cache.get("linux").await.unwrap(); // fails, serves the stale snapshot
+        cache.get("linux").await.unwrap(); // must not hit the API again
 
         assert_eq!(lister.calls(), 2);
 
@@ -215,15 +216,15 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn negative_caching_applies_without_any_snapshot() {
-        // Холодний старт із недоступним API: без паузи кожен запит /cb
-        // платив би повний мережевий таймаут
+        // Cold start with an unreachable API: without the pause every /cb
+        // request would pay the full network timeout
         let lister = FakeLister::new(0);
         let cache = cache_with(lister.clone(), 60);
 
         assert!(cache.get("linux").await.is_err());
         assert!(cache.get("linux").await.is_err());
         assert!(cache.get("linux").await.is_err());
-        assert_eq!(lister.calls(), 1, "повтори мали впертись у паузу");
+        assert_eq!(lister.calls(), 1, "the retries should have hit the pause");
 
         tokio::time::advance(Duration::from_secs(61)).await;
         assert!(cache.get("linux").await.is_err());
@@ -232,7 +233,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn errors_when_no_snapshot_at_all() {
-        let lister = FakeLister::new(0); // падає одразу
+        let lister = FakeLister::new(0); // fails immediately
         let cache = cache_with(lister.clone(), 60);
 
         assert!(cache.get("linux").await.is_err());

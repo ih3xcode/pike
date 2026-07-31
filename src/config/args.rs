@@ -1,40 +1,40 @@
 use std::path::PathBuf;
 
-/// Аргументи `pike serve`. Усі опційні — дефолти живуть у
-/// [`crate::config::resolve`], інакше значення за замовчуванням від clap
-/// стало б невідрізнюваним від явно переданого прапорця і завжди
-/// перебивало б конфіг.
+/// `pike serve` arguments. All optional — the defaults live in
+/// [`crate::config::resolve`], otherwise a clap default would be
+/// indistinguishable from an explicitly passed flag and would always
+/// beat the config file.
 #[derive(Debug, Default, clap::Args)]
 pub struct ServeArgs {
-    /// Шлях до конфіг-файлу (типово /etc/pike/pike.toml, якщо існує)
+    /// Path to the config file (defaults to /etc/pike/pike.toml when present)
     #[arg(long)]
     pub config: Option<PathBuf>,
 
-    /// Адреса, на якій слухати
+    /// Address to listen on
     #[arg(long)]
     pub bind: Option<String>,
 
-    /// HTTP-порт
+    /// HTTP port
     #[arg(long)]
     pub port: Option<u16>,
 
-    /// Адреса, яку показувати в ванлайнерах (автовизначення, якщо не задано)
+    /// Address to advertise in the one-liners (auto-detected when unset)
     #[arg(long)]
     pub addr: Option<String>,
 
-    /// Зовнішній URL (за reverse proxy), напр. https://pike.lab.local
+    /// Public URL behind a reverse proxy, e.g. https://pike.lab.local
     #[arg(long)]
     pub public_url: Option<String>,
 
-    /// Токен автентифікації (генерується, якщо не задано)
+    /// Authentication token (generated when unset)
     #[arg(long, env = "PIKE_TOKEN", hide_env_values = true)]
     pub token: Option<String>,
 
-    /// Таймаут у хвилинах, 0 = без обмеження
+    /// Timeout in minutes, 0 = no limit
     #[arg(long)]
     pub timeout: Option<u64>,
 
-    /// Ліміт завантажень сенсорів, 0 = без обмеження
+    /// Sensor download limit, 0 = no limit
     #[arg(long)]
     pub max_downloads: Option<u32>,
 
@@ -46,7 +46,7 @@ pub struct ServeArgs {
     #[arg(long, env = "PIKE_CLIENT_SECRET", hide_env_values = true)]
     pub client_secret: Option<String>,
 
-    /// Хмара: us-1, us-2, eu-1, us-gov-1, us-gov-2
+    /// Cloud: us-1, us-2, eu-1, us-gov-1, us-gov-2
     #[arg(long)]
     pub cloud: Option<String>,
 
@@ -54,40 +54,40 @@ pub struct ServeArgs {
     #[arg(long, env = "PIKE_CID", hide_env_values = true)]
     pub cid: Option<String>,
 
-    /// Каталог кешу сенсорів
+    /// Sensor cache directory
     #[arg(long)]
     pub cache_dir: Option<PathBuf>,
 
-    /// Час життя списку сенсорів у хвилинах
+    /// Sensor list time-to-live in minutes
     #[arg(long)]
     pub metadata_ttl: Option<u64>,
 
-    /// Максимальний розмір кешу в байтах
+    /// Maximum cache size in bytes
     #[arg(long)]
     pub cache_max_bytes: Option<u64>,
 
-    /// Теги групування, через кому
+    /// Grouping tags, comma-separated
     #[arg(long)]
     pub tags: Option<String>,
 
-    /// Не додавати типовий тег deployment/pike
+    /// Do not add the default deployment/pike tag
     #[arg(long)]
     pub no_default_tag: bool,
 
-    /// Локальний файл сенсора; можна вказати кілька разів
+    /// Local sensor file; may be given more than once
     #[arg(long = "sensor")]
     pub sensors: Vec<PathBuf>,
 
-    /// Вимкнути автентифікацію за токеном
+    /// Disable token authentication
     #[arg(long)]
     pub no_auth: bool,
 }
 
 impl ServeArgs {
-    /// Розбір лише для тестів — дає доступ до логіки clap разом із env.
+    /// Test-only parsing — exercises clap's logic including env vars.
     #[cfg(test)]
     pub fn parse_from_args(argv: &[&str]) -> Self {
-        // `derive(Args)` не дає CommandFactory — команду будуємо самі
+        // `derive(Args)` gives no CommandFactory — build the command by hand
         use clap::{Args, FromArgMatches};
         let cmd = <Self as Args>::augment_args(clap::Command::new("pike"));
         let matches = cmd.get_matches_from(argv);

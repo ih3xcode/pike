@@ -7,8 +7,8 @@ pub struct UnitParams {
 }
 
 pub fn main_unit(p: &UnitParams) -> String {
-    // Під непривілейованим користувачем прив'язка до порту < 1024
-    // неможлива без цієї capability — інакше сервіс просто не підніметься.
+    // Under an unprivileged user, binding to a port below 1024 is impossible
+    // without this capability — the service would simply fail to come up.
     let caps = if p.port < 1024 {
         "AmbientCapabilities=CAP_NET_BIND_SERVICE\n\
          CapabilityBoundingSet=CAP_NET_BIND_SERVICE\n"
@@ -124,8 +124,8 @@ mod tests {
 
     #[test]
     fn address_families_allow_nss_and_netlink() {
-        // AF_UNIX потрібен nss-resolve (інакше не резолвиться жодне імʼя),
-        // AF_NETLINK — визначенню локальної адреси через local-ip-address.
+        // AF_UNIX is needed by nss-resolve (without it no name resolves at
+        // all), AF_NETLINK by local address detection via local-ip-address.
         let unit = main_unit(&params(8080));
         assert!(unit.contains("RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6"));
     }
@@ -134,7 +134,7 @@ mod tests {
     fn cache_dir_is_the_only_writable_path() {
         let unit = main_unit(&params(8080));
         assert!(unit.contains("ReadWritePaths=/var/cache/pike"));
-        // Сервіс не має права переписувати власний бінар
+        // The service must not be able to rewrite its own binary
         assert!(!unit.contains("ReadWritePaths=/usr/local/bin"));
     }
 

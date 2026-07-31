@@ -23,8 +23,8 @@ pub fn host_header(req: &axum::extract::Request) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-/// Явно налаштований `public_url` завжди перемагає Host-заголовок:
-/// інакше клієнт за reverse proxy отримав би внутрішню адресу.
+/// An explicitly configured `public_url` always beats the Host header:
+/// otherwise a client behind a reverse proxy would get the internal address.
 pub fn resolve_base_url(state: &AppState, host: &Option<String>) -> String {
     if state.public_url.is_some() {
         return state.base_url();

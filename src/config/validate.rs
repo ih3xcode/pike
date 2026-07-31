@@ -1,6 +1,6 @@
 use crate::common::AppError;
 
-/// Токен потрапляє в шлях URL — дозволені лише безпечні там символи.
+/// The token ends up in a URL path — only characters safe there are allowed.
 pub fn validate_token(token: &str) -> Result<(), AppError> {
     let ok = !token.is_empty()
         && token.len() <= 128

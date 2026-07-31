@@ -1,6 +1,6 @@
-//! Дрібні утиліти без власної предметної області: типи помилок, зупинка
-//! сервера, локальні адреси, генерація токена. Нічого звідси не залежить
-//! від решти крейта — залежності йдуть лише всередину.
+//! Small utilities with no domain of their own: the error type, shutdown,
+//! local addresses, token generation. Nothing here depends on the rest of
+//! the crate — dependencies only point inwards.
 
 pub mod error;
 pub mod net;

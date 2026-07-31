@@ -1,5 +1,5 @@
-//! Хендлери п'яти маршрутів. Кожен файл — один крок сценарію розгортання:
-//! скрипт → колбек із фактами про хост → завантаження бінаря → звіт.
+//! Handlers for the five routes. Each file is one step of the deployment
+//! flow: script → callback with facts about the host → binary → report.
 
 pub mod callback;
 pub mod done;

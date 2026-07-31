@@ -1,6 +1,6 @@
 use std::process::Command;
 
-/// Запускає зовнішню команду й перетворює ненульовий код на помилку.
+/// Runs an external command and turns a non-zero exit code into an error.
 pub(super) fn run_cmd(program: &str, args: &[&str]) -> Result<(), String> {
     let status = Command::new(program)
         .args(args)

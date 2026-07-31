@@ -15,8 +15,8 @@ pub(super) fn ensure_user() -> Result<(), String> {
         eprintln!("  user '{SERVICE_USER}' already exists");
         return Ok(());
     }
-    // useradd, а не редагування /etc/passwd: інакше зламаємось
-    // на системах з SSSD, LDAP та іншими NSS-бекендами
+    // useradd rather than editing /etc/passwd: the latter breaks on systems
+    // with SSSD, LDAP and other NSS backends
     run_cmd(
         "useradd",
         &[
@@ -37,9 +37,9 @@ pub(super) fn install_binary() -> Result<(), String> {
         eprintln!("  binary already at {BIN_PATH}");
         return Ok(());
     }
-    // Пряме копіювання поверх працюючого сервісу дало б ETXTBSY, тому
-    // пишемо поруч і перейменовуємо: rename над запущеним бінарем дозволений,
-    // старий інод живе, доки процес не завершиться
+    // Copying straight over a running service would give ETXTBSY, so write
+    // alongside and rename: renaming over a running binary is allowed, and
+    // the old inode lives until the process exits
     let staged = Path::new(BIN_PATH).with_extension("new");
     std::fs::copy(&current, &staged)
         .map_err(|e| format!("cannot stage binary at {}: {e}", staged.display()))?;
@@ -61,7 +61,7 @@ pub(super) fn write_secure(path: &str, content: &str, mode: u32, owner: &str) ->
     Ok(())
 }
 
-/// Створює каталог із заданими правами й власником.
+/// Creates a directory with the given mode and owner.
 pub(super) fn prepare_dir(path: &str, mode: u32, owner: &str) -> Result<(), String> {
     std::fs::create_dir_all(path).map_err(|e| format!("cannot create {path}: {e}"))?;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
@@ -70,7 +70,7 @@ pub(super) fn prepare_dir(path: &str, mode: u32, owner: &str) -> Result<(), Stri
     Ok(())
 }
 
-/// Видаляє шлях, повідомляючи про помилку, але не вважаючи її фатальною.
+/// Removes a path, reporting failures without treating them as fatal.
 pub(super) fn remove_best_effort(path: &Path) {
     if !path.exists() {
         return;

@@ -1,7 +1,7 @@
-//! Виконання плану установки: користувач, бінар, конфіг, кеш, юніти.
+//! Executing the install plan: user, binary, config, cache, units.
 //!
-//! Усе, що могло провалитись через відповіді оператора, вже перевірив
-//! візард — тут лишились тільки операції над системою.
+//! Everything that could fail because of the operator's answers has already
+//! been checked by the wizard — only system operations are left here.
 
 mod cmd;
 mod fs;
@@ -31,7 +31,7 @@ pub fn install() -> Result<(), i32> {
         return Err(1);
     }
 
-    // Усе, що може провалитись, провалюється тут — до першого запису
+    // Everything that can fail, fails here — before the first write
     let plan = match wizard::run() {
         Ok(p) => p,
         Err(e) => {
@@ -89,9 +89,9 @@ fn write_everything(plan: &wizard::InstallPlan) -> Result<(), String> {
     if plan.enable_auto_update {
         systemd::write_update_units()?;
     } else {
-        // Переустановка з відмовою від автооновлення має вимкнути таймер,
-        // що лишився з попереднього разу — інакше root і далі щотижня
-        // переписував би бінар усупереч щойно висловленій волі
+        // A reinstall that declines auto-update must disable the timer left
+        // over from last time — otherwise root would keep rewriting the
+        // binary weekly against the wish just expressed
         systemd::remove_update_units();
     }
 
@@ -125,8 +125,8 @@ pub fn uninstall(purge: bool) -> Result<(), i32> {
         return Err(1);
     }
 
-    // Помилки тут не фатальні: юніта може вже не бути,
-    // а мета команди — привести систему в чистий стан.
+    // Errors here are not fatal: the unit may already be gone, and the point
+    // of the command is to leave the system in a clean state.
     for unit in ["pike.service", "pike-update.timer"] {
         systemd::disable_now(unit);
     }
@@ -145,8 +145,8 @@ pub fn uninstall(purge: bool) -> Result<(), i32> {
         return Ok(());
     }
 
-    // Конфіг містить секрети — його видалення має бути свідомим,
-    // тому воно живе тільки за явним --purge
+    // The config holds secrets — removing it must be deliberate, so it only
+    // happens behind an explicit --purge
     let cache_dir = configured_cache_dir();
     fs::remove_best_effort(Path::new(CONFIG_DIR));
     fs::remove_best_effort(&cache_dir);
@@ -160,8 +160,8 @@ pub fn uninstall(purge: bool) -> Result<(), i32> {
     Ok(())
 }
 
-/// Каталог кешу з чинного конфігу; типовий сервісний шлях, якщо конфіг
-/// уже зник або не читається.
+/// The cache directory from the current config; the default service path
+/// when the config is already gone or unreadable.
 fn configured_cache_dir() -> std::path::PathBuf {
     std::fs::read_to_string(CONFIG_PATH)
         .ok()

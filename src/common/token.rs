@@ -1,5 +1,5 @@
-/// Токен потрапляє в шлях URL, тому це hex — 128 біт ентропії
-/// у 32 символах, безпечних у будь-якому місці шляху.
+/// The token ends up in a URL path, so it is hex — 128 bits of entropy
+/// in 32 characters that are safe anywhere in a path.
 pub fn generate_token() -> String {
     let bytes: [u8; 16] = rand::random();
     hex::encode(bytes)

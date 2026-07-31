@@ -1,5 +1,5 @@
-/// Список IPv4-адрес, які має сенс показати як «адресу сервера».
-/// Порядок стабільний: спершу справжні інтерфейси, потім 0.0.0.0 і loopback.
+/// The IPv4 addresses worth offering as "the server's address".
+/// The order is stable: real interfaces first, then 0.0.0.0 and loopback.
 pub fn detect_available_addrs() -> Vec<(String, String)> {
     let mut addrs = Vec::new();
     if let Ok(interfaces) = local_ip_address::list_afinet_netifas() {

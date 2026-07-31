@@ -27,8 +27,8 @@ pub(super) fn write_update_units() -> Result<(), String> {
     Ok(())
 }
 
-/// Вимикає й видаляє юніти автооновлення. Помилки не фатальні — юнітів
-/// може просто не бути.
+/// Disables and removes the auto-update units. Errors are not fatal — the
+/// units may simply not be there.
 pub(super) fn remove_update_units() {
     let existed = Path::new(UPDATE_TIMER_PATH).exists() || Path::new(UPDATE_UNIT_PATH).exists();
     disable_now("pike-update.timer");
@@ -48,7 +48,7 @@ pub(super) fn enable_now(unit: &str) -> Result<(), String> {
     run_cmd("systemctl", &["enable", "--now", unit])
 }
 
-/// Вимикає юніт, ігноруючи помилки: мета — привести систему в чистий стан.
+/// Disables a unit, ignoring errors: the goal is a clean system state.
 pub(super) fn disable_now(unit: &str) {
     let _ = Command::new("systemctl")
         .args(["disable", "--now", unit])

@@ -1,8 +1,8 @@
 use crate::config::ResolvedConfig;
 use crate::server::AppState;
 
-/// Те, що бачить оператор одразу після старту: адреси, ліміти й два
-/// готові ванлайнери.
+/// What the operator sees right after startup: addresses, limits and the
+/// two ready-to-paste one-liners.
 pub fn print_banner(
     state: &AppState,
     cfg: &ResolvedConfig,

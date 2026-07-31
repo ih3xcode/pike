@@ -1,8 +1,8 @@
-//! Інтерактивний збір відповідей для `pike service-install`.
+//! Interactive collection of the answers for `pike service-install`.
 //!
-//! Візард нічого не пише на диск: усе, що може провалитись — перевірка
-//! креденшелів, розбір адрес, валідація токена — відбувається тут, до
-//! першого запису. Результат — готовий [`InstallPlan`].
+//! The wizard writes nothing to disk: everything that can fail — validating
+//! credentials, parsing addresses, checking the token — happens here, before
+//! the first write. The result is a ready [`InstallPlan`].
 
 mod prompts;
 mod render;
@@ -126,8 +126,9 @@ pub fn run() -> Result<InstallPlan, String> {
     })
 }
 
-/// Перевіряє креденшели проти API і повертає CID. Крім автентифікації
-/// смикає і список сенсорів — саме того скоупа, без якого сервер марний.
+/// Validates the credentials against the API and returns the CID. Besides
+/// authenticating it also lists sensors — the one scope without which the
+/// server is useless.
 fn validate_credentials(
     client_id: &str,
     client_secret: &str,
@@ -161,9 +162,9 @@ fn ask_advertised_addr() -> Option<String> {
         if raw.is_empty() {
             return None;
         }
-        // Число поза списком — це майже напевно помилка при виборі пункту,
-        // а не адреса; записати його як літерал означало б віддати хостам
-        // ванлайнер виду http://4:8080/<token>
+        // A number outside the list is almost certainly a mistyped index
+        // rather than an address; storing it literally would hand hosts a
+        // one-liner like http://4:8080/<token>
         match raw.parse::<usize>() {
             Ok(i) if i < addrs.len() => return Some(addrs[i].1.clone()),
             Ok(_) => eprintln!("  (no such index; pick 0-{})", addrs.len() - 1),

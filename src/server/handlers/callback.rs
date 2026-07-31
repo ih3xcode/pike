@@ -70,7 +70,7 @@ async fn serve_callback(state: &AppState, body: &str, remote: &str, path: &str) 
         info.hostname, info.pkg_type, info.arch
     );
 
-    // 1. Явно передані файли мають пріоритет — це свідомий пін версії
+    // 1. Explicitly supplied files win — that is a deliberate version pin
     if let Some(sensor) = find_best_local_sensor(
         &state.local_sensors,
         info.target_type,
@@ -86,7 +86,7 @@ async fn serve_callback(state: &AppState, body: &str, remote: &str, path: &str) 
         return format!("{}|{}", sensor.filename, sensor.sha256).into_response();
     }
 
-    // 2. Інакше — свіжий список з API і кеш за sha256
+    // 2. Otherwise: a fresh list from the API and the sha256-keyed cache
     let (Some(metadata), Some(store)) = (&state.metadata, &state.store) else {
         eprintln!(
             "[host] {}: no local sensor and no API configured",
@@ -146,8 +146,8 @@ async fn serve_callback(state: &AppState, body: &str, remote: &str, path: &str) 
         info.hostname, meta.name, meta.os
     );
 
-    // Маршрут /s/{sha256} приймає лише нижній регістр — нормалізуємо тут,
-    // на межі з метаданими, щоб відповідь клієнту й імʼя файлу в кеші збіглись
+    // The /s/{sha256} route only accepts lowercase — normalise here, at the
+    // metadata boundary, so the answer and the cached file name agree
     let sha256 = meta.sha256.to_ascii_lowercase();
 
     if let Err(e) = store.ensure(&sha256).await {
@@ -207,8 +207,8 @@ mod tests {
     fn deb_meta(name: &str) -> SensorMeta {
         SensorMeta {
             name: name.to_string(),
-            // Верхній регістр навмисно: API віддає sha саме так, а маршрут
-            // /s/{sha256} приймає лише нижній
+            // Uppercase on purpose: that is how the API returns the sha,
+            // while the /s/{sha256} route only accepts lowercase
             sha256: payload_sha().to_uppercase(),
             platform: "linux".into(),
             os: "Ubuntu".into(),
@@ -219,8 +219,8 @@ mod tests {
         }
     }
 
-    /// Стан із підробним API. Повертає ще й каталог кешу — його треба
-    /// тримати живим, доки триває тест.
+    /// State backed by a fake API. Also returns the cache directory, which
+    /// must be kept alive for the duration of the test.
     fn state_with_api(api: Arc<Api>) -> (AppState, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let mut st = state(None, None);
@@ -255,11 +255,11 @@ mod tests {
         assert_eq!(
             body_of(resp).await,
             format!("falcon-sensor_7.20_amd64.deb|{}", payload_sha()),
-            "клієнту віддаємо sha в нижньому регістрі"
+            "the client must be given the sha in lowercase"
         );
         assert!(
             dir.path().join(payload_sha()).exists(),
-            "бінар мав опинитись у кеші під іменем-sha"
+            "the binary should have landed in the cache under its sha"
         );
         let hosts = st.hosts.lock().unwrap();
         assert!(matches!(hosts[0].status, HostStatus::SensorReady));
@@ -305,6 +305,9 @@ mod tests {
         let st = state(None, None);
         let resp = serve_callback(&st, "garbage", "10.0.0.5", "/cb").await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-        assert!(st.hosts.lock().unwrap().is_empty(), "хост не мав реєструватись");
+        assert!(
+            st.hosts.lock().unwrap().is_empty(),
+            "the host should not have been registered"
+        );
     }
 }

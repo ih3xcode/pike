@@ -35,9 +35,9 @@ pub(super) fn prompt_allow_empty(label: &str) -> String {
     line.trim().to_string()
 }
 
-/// Питає, доки відповідь не пройде перевірку. Візард обіцяє, що все
-/// перевірене ще до першого запису на диск — інакше про помилку в токені
-/// чи bind дізнаєшся аж від `systemctl`, коли сервіс уже встановлено.
+/// Asks until the answer passes validation. The wizard promises everything
+/// is checked before the first write to disk — otherwise a bad token or bind
+/// address would only surface from `systemctl`, once the service is installed.
 pub(super) fn prompt_valid<T>(
     label: &str,
     default: Option<&str>,

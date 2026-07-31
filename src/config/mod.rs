@@ -1,7 +1,7 @@
-//! Конфігурація `pike serve`: аргументи командного рядка, TOML-файл
-//! і злиття їх в один незмінний [`ResolvedConfig`].
+//! `pike serve` configuration: command-line arguments, the TOML file and
+//! the merge of both into a single immutable [`ResolvedConfig`].
 //!
-//! Пріоритет: прапорці > змінні середовища > файл > дефолти.
+//! Precedence: flags > environment variables > file > defaults.
 
 pub mod args;
 pub mod defaults;

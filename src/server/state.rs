@@ -45,9 +45,9 @@ pub struct HostEntry {
     pub time: chrono::DateTime<chrono::Local>,
 }
 
-/// Спільний стан сервера. Обидва кеші тримають `Arc<dyn …>` всередині,
-/// тому тут немає ні параметрів типу, ні згадки про CrowdStrike —
-/// стан можна зібрати з підробних джерел прямо в тесті.
+/// Shared server state. Both caches hold `Arc<dyn …>` inside, so there are
+/// no type parameters here and no mention of CrowdStrike — the state can be
+/// assembled from fakes right inside a test.
 pub struct AppState {
     pub token: Option<String>,
     pub cid: String,
@@ -55,9 +55,9 @@ pub struct AppState {
     pub addr: String,
     pub port: u16,
     pub public_url: Option<String>,
-    /// Явно передані файли. Незмінні після старту — завантажене з API
-    /// сюди навмисно не потрапляє, інакше перша завантажена версія
-    /// назавжди перебивала б свіжі метадані.
+    /// Explicitly supplied files. Immutable after startup — anything
+    /// downloaded from the API deliberately stays out, otherwise the first
+    /// downloaded version would beat fresh metadata forever.
     pub local_sensors: Vec<Sensor>,
     pub metadata: Option<Arc<MetadataCache>>,
     pub store: Option<Arc<BinaryStore>>,
@@ -89,7 +89,7 @@ impl AppState {
         }
     }
 
-    /// Базовий URL для ванлайнера, побудований з Host-заголовка запиту.
+    /// Base URL for the one-liner, built from the request's Host header.
     pub fn base_url_with_host(&self, host: &str) -> String {
         match &self.token {
             Some(t) => format!("http://{}/{}", host, t),
@@ -97,8 +97,8 @@ impl AppState {
         }
     }
 
-    /// Базовий URL з конфігурації: `public_url`, якщо заданий, інакше
-    /// оголошена адреса й порт.
+    /// Base URL from the configuration: `public_url` when set, otherwise
+    /// the advertised address and port.
     pub fn base_url(&self) -> String {
         if let Some(url) = &self.public_url {
             let base = url.trim_end_matches('/');
@@ -119,7 +119,7 @@ impl AppState {
 pub(crate) mod test_support {
     use super::*;
 
-    /// Мінімальний стан для тестів: без сенсорів, без API, без лімітів.
+    /// Minimal state for tests: no sensors, no API, no limits.
     pub(crate) fn state(token: Option<&str>, public_url: Option<&str>) -> AppState {
         AppState {
             token: token.map(|s| s.to_string()),

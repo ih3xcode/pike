@@ -1,6 +1,6 @@
 use super::Answers;
 
-/// TOML-екранування рядка: лише лапки й бекслеші, решта — як є.
+/// TOML string escaping: quotes and backslashes only, the rest verbatim.
 fn toml_string(value: &str) -> String {
     let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
     format!("\"{escaped}\"")
@@ -98,7 +98,7 @@ mod tests {
         assert!(!toml_text.contains("public_url"));
         assert!(!toml_text.contains("addr ="));
         assert!(!toml_text.contains("tags ="));
-        // і згенероване все одно має розбиратись
+        // and what was generated must still parse
         toml::from_str::<FileConfig>(&toml_text).unwrap();
     }
 

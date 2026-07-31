@@ -7,8 +7,8 @@ use super::defaults::*;
 use super::file::FileConfig;
 use super::validate::validate_token;
 
-/// Конфіг після злиття всіх джерел. Далі по коду читається лише він —
-/// жоден модуль не заглядає ні в аргументи, ні у файл.
+/// The config after all sources are merged. Nothing downstream reads
+/// anything else — no module looks at the arguments or the file directly.
 #[derive(Debug, Clone)]
 pub struct ResolvedConfig {
     pub bind: String,
@@ -31,7 +31,7 @@ pub struct ResolvedConfig {
     pub files: Vec<PathBuf>,
 }
 
-/// Порожній рядок у TOML означає «не задано».
+/// An empty string in TOML means "not set".
 fn blank_to_none(v: Option<String>) -> Option<String> {
     v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
 }
@@ -123,8 +123,8 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
-    // Змінні середовища глобальні для процесу — тести, що їх чіпають,
-    // мусять іти по черзі.
+    // Environment variables are process-global — tests that touch them must
+    // run one at a time.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn empty_args() -> ServeArgs {
@@ -137,7 +137,7 @@ mod tests {
         f
     }
 
-    // --- дефолти ---
+    // --- defaults ---
 
     #[test]
     fn defaults_when_nothing_set() {
@@ -151,7 +151,7 @@ mod tests {
         assert!(cfg.default_tag);
         assert!(cfg.auth_enabled);
         assert!(cfg.token.is_none());
-        // Без дефолту api_base_url мовчки взяв би us-1
+        // Without the default, api_base_url would silently pick us-1
         assert_eq!(cfg.cloud.as_deref(), Some("eu-1"));
     }
 
@@ -173,7 +173,7 @@ mod tests {
         assert_eq!(cfg.cloud.as_deref(), Some("us-gov-1"));
     }
 
-    // --- пріоритет ---
+    // --- precedence ---
 
     #[test]
     fn file_value_used_when_no_arg() {
@@ -194,7 +194,7 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { std::env::set_var("PIKE_CLIENT_ID", "from-env") };
 
-        // clap читає env під час розбору
+        // clap reads env vars while parsing
         let args = ServeArgs::parse_from_args(&["pike"]);
         let cfg = resolve(&args, FileConfig::default()).unwrap();
         assert_eq!(cfg.client_id.as_deref(), Some("from-env"));
@@ -206,7 +206,7 @@ mod tests {
         unsafe { std::env::remove_var("PIKE_CLIENT_ID") };
     }
 
-    // --- порожні рядки в TOML ---
+    // --- empty strings in TOML ---
 
     #[test]
     fn blank_strings_in_file_are_unset() {
@@ -224,7 +224,7 @@ mod tests {
         assert!(cfg.cid.is_none());
     }
 
-    // --- токен ---
+    // --- token ---
 
     #[test]
     fn token_from_file_is_kept() {
@@ -252,7 +252,7 @@ mod tests {
         assert!(cfg.token.is_none());
     }
 
-    // --- теги ---
+    // --- tags ---
 
     #[test]
     fn no_default_tag_flag_overrides_file() {

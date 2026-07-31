@@ -5,9 +5,9 @@ use crate::common::net::detect_available_addrs;
 
 use super::state::ConfigState;
 
-/// Знімок відповідей, який переживає запуск і зупинку сервера.
-/// Навмисно без ефемерного: помилок, прапорців діалогу й списку адрес —
-/// адреси перевизначаються на кожному поверненні на екран.
+/// Snapshot of the answers that survives starting and stopping the server.
+/// Deliberately without the ephemeral parts — errors, dialog flags and the
+/// address list, which is re-detected every time we return to the screen.
 #[derive(Clone)]
 pub(super) struct SavedConfig {
     pub config_tab: usize,
@@ -49,8 +49,8 @@ pub(super) fn make_saved_config(config: &ConfigState) -> SavedConfig {
 
 pub(super) fn config_from_saved(saved: SavedConfig) -> ConfigState {
     let available_addrs = detect_available_addrs();
-    // Інтерфейс міг зникнути, поки сервер працював — індекс поза списком
-    // означав би паніку при відмальовуванні комбобокса
+    // The interface may have disappeared while the server was running — an
+    // index past the end would panic when drawing the combo box
     let selected_addr_idx = if saved.selected_addr_idx < available_addrs.len() {
         saved.selected_addr_idx
     } else {

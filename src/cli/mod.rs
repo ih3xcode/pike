@@ -1,5 +1,5 @@
-//! Точки входу команд. Тут живе розбір аргументів і складання застосунку;
-//! самі підсистеми одна про одну не знають.
+//! Command entry points. Argument parsing and application assembly live
+//! here; the subsystems themselves know nothing about each other.
 
 mod banner;
 mod serve;
@@ -16,27 +16,27 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Запустити GUI (типово, якщо команду не вказано)
+    /// Run the GUI (the default when no subcommand is given)
     Gui,
-    /// Запустити HTTP-сервер розгортання
+    /// Run the deployment HTTP server
     Serve(crate::config::ServeArgs),
-    /// Перевірити наявність оновлень і за потреби встановити
+    /// Check for updates and optionally install them
     Update {
         #[arg(long)]
         apply: bool,
     },
-    /// Встановити pike як systemd-сервіс (Linux, потребує root)
+    /// Install pike as a systemd service (Linux, requires root)
     ServiceInstall,
-    /// Видалити systemd-сервіс
+    /// Remove the systemd service
     ServiceUninstall {
-        /// Також видалити конфіг, кеш і системного користувача
+        /// Also remove the config, the cache and the system user
         #[arg(long)]
         purge: bool,
     },
 }
 
-/// Розбирає аргументи й віддає керування потрібній команді.
-/// Виходить з процесу з ненульовим кодом, якщо команда провалилась.
+/// Parses the arguments and hands control to the matching command.
+/// Exits the process with a non-zero code when the command fails.
 pub fn run() {
     let cli = Cli::parse();
 
@@ -84,7 +84,7 @@ mod tests {
 
     #[test]
     fn old_top_level_flags_are_rejected() {
-        // Стара форма `pike --sensor x --cid y` більше не підтримується
+        // The old `pike --sensor x --cid y` form is no longer supported
         assert!(Cli::try_parse_from(["pike", "--sensor", "x.deb"]).is_err());
     }
 
