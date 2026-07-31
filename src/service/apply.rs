@@ -201,7 +201,58 @@ pub fn install() -> Result<(), i32> {
     }
 }
 
-pub fn uninstall(_purge: bool) -> Result<(), i32> {
-    eprintln!("ERROR: not implemented yet");
-    Err(1)
+pub fn uninstall(purge: bool) -> Result<(), i32> {
+    if let Err(e) = preflight() {
+        eprintln!("ERROR: {e}");
+        return Err(1);
+    }
+
+    // Помилки тут не фатальні: юніта може вже не бути,
+    // а мета команди — привести систему в чистий стан.
+    for unit in ["pike.service", "pike-update.timer"] {
+        let _ = Command::new("systemctl")
+            .args(["disable", "--now", unit])
+            .status();
+    }
+    for path in [UNIT_PATH, UPDATE_UNIT_PATH, UPDATE_TIMER_PATH] {
+        if Path::new(path).exists() {
+            match std::fs::remove_file(path) {
+                Ok(()) => eprintln!("  removed {path}"),
+                Err(e) => eprintln!("  WARNING: cannot remove {path}: {e}"),
+            }
+        }
+    }
+    let _ = Command::new("systemctl").arg("daemon-reload").status();
+
+    if !purge {
+        eprintln!("\nService removed. Config, cache and the '{SERVICE_USER}' user were kept.");
+        eprintln!("Run with --purge to remove them as well.");
+        return Ok(());
+    }
+
+    // Конфіг містить секрети — його видалення має бути свідомим,
+    // тому воно живе тільки за явним --purge
+    let cache_dir = std::fs::read_to_string(CONFIG_PATH)
+        .ok()
+        .and_then(|text| toml::from_str::<crate::config::FileConfig>(&text).ok())
+        .and_then(|c| c.sensors.cache_dir)
+        .unwrap_or_else(|| std::path::PathBuf::from("/var/cache/pike"));
+
+    if Path::new(CONFIG_DIR).exists() {
+        match std::fs::remove_dir_all(CONFIG_DIR) {
+            Ok(()) => eprintln!("  removed {CONFIG_DIR}"),
+            Err(e) => eprintln!("  WARNING: cannot remove {CONFIG_DIR}: {e}"),
+        }
+    }
+    if cache_dir.exists() {
+        match std::fs::remove_dir_all(&cache_dir) {
+            Ok(()) => eprintln!("  removed {}", cache_dir.display()),
+            Err(e) => eprintln!("  WARNING: cannot remove {}: {e}", cache_dir.display()),
+        }
+    }
+    let _ = Command::new("userdel").arg(SERVICE_USER).status();
+    eprintln!("  removed user '{SERVICE_USER}'");
+
+    eprintln!("\nPurged. The binary at {BIN_PATH} was left in place.");
+    Ok(())
 }
