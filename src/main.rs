@@ -6,6 +6,7 @@ mod falcon_api;
 mod gui;
 mod scripts;
 mod sensor_match;
+mod sensor_store;
 mod server;
 mod shutdown;
 mod types;

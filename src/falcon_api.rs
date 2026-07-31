@@ -246,3 +246,15 @@ impl FalconClient {
         Ok(data)
     }
 }
+
+impl crate::sensor_store::SensorLister for FalconClient {
+    async fn list(&self, platform: &str) -> Result<Vec<SensorMeta>, AppError> {
+        self.list_sensors(platform).await
+    }
+}
+
+impl crate::sensor_store::SensorDownloader for FalconClient {
+    async fn fetch(&self, sha256: &str) -> Result<bytes::Bytes, AppError> {
+        self.download_sensor(sha256).await
+    }
+}
