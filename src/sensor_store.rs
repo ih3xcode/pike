@@ -163,7 +163,28 @@ impl<D: SensorDownloader> BinaryStore<D> {
     }
 
     pub fn path_for(&self, sha256: &str) -> PathBuf {
-        self.dir.join(sha256)
+        // Імʼя завжди в нижньому регістрі: маршрут /s/{sha256} приймає лише
+        // такий, а метадані з API можуть прийти в будь-якому
+        self.dir.join(sha256.to_ascii_lowercase())
+    }
+
+    /// Прибирає недокачані файли з `tmp/`. Викликається на старті, коли
+    /// власних завантажень у польоті ще немає: після SIGKILL там лишаються
+    /// сирі байти, які не бачить облік розміру й не чистить ніщо інше.
+    pub fn sweep_tmp(&self) {
+        let tmp_dir = self.dir.join("tmp");
+        let Ok(entries) = std::fs::read_dir(&tmp_dir) else {
+            return;
+        };
+        let mut removed = 0u32;
+        for item in entries.flatten() {
+            if item.path().is_file() && std::fs::remove_file(item.path()).is_ok() {
+                removed += 1;
+            }
+        }
+        if removed > 0 {
+            eprintln!("[cache] Removed {removed} unfinished download(s) from {}", tmp_dir.display());
+        }
     }
 
     pub async fn ensure(&self, sha256: &str) -> Result<PathBuf, AppError> {
@@ -218,15 +239,20 @@ impl<D: SensorDownloader> BinaryStore<D> {
             .map_err(|e| AppError::io("Cannot write sensor to cache", e))?;
 
         // Атомарний у межах ФС: недокачаний файл ніколи не видно під фінальним іменем
-        tokio::fs::rename(&tmp_path, self.path_for(sha256))
+        let final_path = self.path_for(sha256);
+        tokio::fs::rename(&tmp_path, &final_path)
             .await
             .map_err(|e| AppError::io("Cannot publish sensor into cache", e))?;
 
-        self.run_gc().await;
+        self.run_gc(&final_path).await;
         Ok(())
     }
 
-    async fn run_gc(&self) {
+    /// `keep` — щойно опублікований файл. Він виключений з витіснення:
+    /// інакше при ліміті, меншому за розмір сенсора, GC зносив би його
+    /// одразу після запису, і клієнт отримував би 404 на файл, який
+    /// сервер щойно пообіцяв у відповіді на /cb.
+    async fn run_gc(&self, keep: &Path) {
         let entries = match Self::scan(&self.dir).await {
             Ok(e) => e,
             Err(e) => {
@@ -234,7 +260,24 @@ impl<D: SensorDownloader> BinaryStore<D> {
                 return;
             }
         };
-        for victim in plan_eviction(entries, self.max_bytes) {
+        let in_flight = Self::tmp_bytes(&self.dir).await;
+        let total: u64 = entries.iter().map(|e| e.size).sum::<u64>() + in_flight;
+        let candidates: Vec<CacheEntry> =
+            entries.into_iter().filter(|e| e.path != keep).collect();
+        let kept: u64 = total - candidates.iter().map(|e| e.size).sum::<u64>();
+
+        if total > self.max_bytes && kept > self.max_bytes {
+            eprintln!(
+                "[cache] WARNING: {} alone exceeds cache_max_bytes ({kept} > {}); \
+                 raise the limit or the cache will churn",
+                keep.display(),
+                self.max_bytes
+            );
+        }
+
+        // Бюджет для решти файлів — ліміт мінус те, що ми зобовʼязані лишити
+        let budget = self.max_bytes.saturating_sub(kept);
+        for victim in plan_eviction(candidates, budget) {
             match tokio::fs::remove_file(&victim).await {
                 Ok(()) => eprintln!("[cache] Evicted {}", victim.display()),
                 Err(e) => eprintln!("[cache] WARNING: cannot evict {}: {e}", victim.display()),
@@ -248,7 +291,7 @@ impl<D: SensorDownloader> BinaryStore<D> {
         while let Some(item) = rd.next_entry().await? {
             let meta = item.metadata().await?;
             if !meta.is_file() {
-                continue; // пропускаємо tmp/
+                continue;
             }
             out.push(CacheEntry {
                 path: item.path(),
@@ -257,6 +300,25 @@ impl<D: SensorDownloader> BinaryStore<D> {
             });
         }
         Ok(out)
+    }
+
+    /// Скільки байтів займають завантаження в польоті. Вони не витісняються
+    /// (їх пише інша задача), але в ліміт входять — інакше кеш стабільно
+    /// переростав би `cache_max_bytes` на розмір паралельних завантажень.
+    async fn tmp_bytes(dir: &Path) -> u64 {
+        let tmp_dir = dir.join("tmp");
+        let Ok(mut rd) = tokio::fs::read_dir(&tmp_dir).await else {
+            return 0;
+        };
+        let mut total = 0u64;
+        while let Ok(Some(item)) = rd.next_entry().await {
+            if let Ok(meta) = item.metadata().await {
+                if meta.is_file() {
+                    total += meta.len();
+                }
+            }
+        }
+        total
     }
 }
 
@@ -498,6 +560,47 @@ mod tests {
             1,
             "десять паралельних запитів = одне завантаження"
         );
+    }
+
+    #[tokio::test]
+    async fn just_downloaded_file_survives_gc() {
+        let dir = tempfile::tempdir().unwrap();
+        let payload = b"a sensor larger than the limit";
+        let sha = sha256_of(payload);
+        let dl = FakeDownloader::new(payload, false);
+        // Ліміт менший за сам сенсор — GC не має зносити те, що щойно обіцяли
+        let store = BinaryStore::new(dl, dir.path().to_path_buf(), 4);
+
+        let path = store.ensure(&sha).await.unwrap();
+        assert!(path.exists(), "щойно завантажений файл витіснено");
+        assert_eq!(std::fs::read(&path).unwrap(), payload);
+    }
+
+    #[tokio::test]
+    async fn sweep_tmp_removes_partial_downloads() {
+        let dir = tempfile::tempdir().unwrap();
+        let tmp = dir.path().join("tmp");
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("abc.deadbeef"), b"half a sensor").unwrap();
+
+        let dl = FakeDownloader::new(b"x", false);
+        let store = BinaryStore::new(dl, dir.path().to_path_buf(), u64::MAX);
+        store.sweep_tmp();
+
+        assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn uppercase_sha256_maps_to_the_lowercase_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let payload = b"case test";
+        let sha = sha256_of(payload);
+        let dl = FakeDownloader::new(payload, false);
+        let store = BinaryStore::new(dl, dir.path().to_path_buf(), u64::MAX);
+
+        let path = store.ensure(&sha.to_uppercase()).await.unwrap();
+        assert_eq!(path, dir.path().join(&sha), "маршрут /s/ приймає лише нижній регістр");
+        assert!(path.exists());
     }
 
     // --- plan_eviction (чиста функція) ---

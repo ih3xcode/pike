@@ -374,11 +374,15 @@ fn run_serve(args: config::ServeArgs) -> Result<(), i32> {
         ))
     });
     let store = falcon.clone().map(|c| {
-        Arc::new(sensor_store::BinaryStore::new(
+        let store = sensor_store::BinaryStore::new(
             c,
             cfg.cache_dir.clone(),
             cfg.cache_max_bytes,
-        ))
+        );
+        // Своїх завантажень у польоті ще немає — усе в tmp/ лишилось від
+        // попереднього запуску, обірваного посеред завантаження
+        store.sweep_tmp();
+        Arc::new(store)
     });
 
     let state = Arc::new(AppState {

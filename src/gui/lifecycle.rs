@@ -206,15 +206,17 @@ impl super::MindeliverApp {
         let metadata = falcon.clone().map(|c| {
             std::sync::Arc::new(crate::sensor_store::MetadataCache::new(
                 c,
-                std::time::Duration::from_secs(60 * 60),
+                std::time::Duration::from_secs(crate::config::DEFAULT_METADATA_TTL_MINUTES * 60),
             ))
         });
         let store = falcon.map(|c| {
-            std::sync::Arc::new(crate::sensor_store::BinaryStore::new(
+            let store = crate::sensor_store::BinaryStore::new(
                 c,
                 cache_dir,
-                21_474_836_480,
-            ))
+                crate::config::DEFAULT_CACHE_MAX_BYTES,
+            );
+            store.sweep_tmp();
+            std::sync::Arc::new(store)
         });
 
         let app_state = Arc::new(AppState {

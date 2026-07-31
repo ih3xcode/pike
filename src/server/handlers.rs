@@ -401,7 +401,11 @@ async fn serve_callback(
         info.hostname, meta.name, meta.os
     );
 
-    if let Err(e) = store.ensure(&meta.sha256).await {
+    // Маршрут /s/{sha256} приймає лише нижній регістр — нормалізуємо тут,
+    // на межі з метаданими, щоб відповідь клієнту й імʼя файлу в кеші збіглись
+    let sha256 = meta.sha256.to_ascii_lowercase();
+
+    if let Err(e) = store.ensure(&sha256).await {
         eprintln!("[host] {}: cannot prepare sensor — {e}", info.hostname);
         state.update_host_status(&info.hostname, HostStatus::Failed("sensor unavailable".into()));
         log_request("POST", path, remote, 502, "sensor download failed");
@@ -409,7 +413,7 @@ async fn serve_callback(
     }
 
     state.update_host_status(&info.hostname, HostStatus::SensorReady);
-    format!("{}|{}", meta.name, meta.sha256).into_response()
+    format!("{}|{}", meta.name, sha256).into_response()
 }
 
 #[cfg(test)]
