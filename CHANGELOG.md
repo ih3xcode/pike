@@ -7,53 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.5.0] - 2026-07-31
-
-### Added
-
-- `pike service-install` — інтерактивний візард, що валідує креденшели проти
-  API, створює системного користувача, конфіг із правами 0640, каталог кешу
-  й hardened systemd-юніт.
-- `pike service-uninstall [--purge]`.
-- Опційний таймер автооновлення (за замовчуванням вимкнений), відокремлений
-  від сервісу: під `ProtectSystem=strict` сервіс не має права переписувати
-  власний бінар.
-
-### Changed
-
-- `pike update --apply` тепер звіряє sha256 асета з релізу і відмовляється
-  оновлюватись, якщо контрольної суми немає або вона не збігається.
-- CI публікує `.sha256` поруч із кожним бінарем релізу.
-
 ## [0.4.0] - 2026-07-31
 
 ### Changed
 
-- **BREAKING:** сервер переїхав під підкоманду `pike serve`. Стара форма
-  `pike --sensor X --cid Y` більше не підтримується. GUI запускається без
-  аргументів або через `pike gui`.
-- **BREAKING:** маршрут завантаження змінився з `/s/{filename}` на `/s/{sha256}`.
-- Сенсори з API більше не змішуються з локальними файлами — матчинг завжди
-  йде по свіжому списку з API, тож версія сенсора більше не «застигає» на
-  першій завантаженій.
-- Локальний матчинг RPM більше не має fallback «будь-який пакет цієї
-  архітектури», який міг віддати пакет чужої дистрибуції.
-- Згенерований токен тепер 32 символи замість 8.
-- Типовий таймаут тепер 0 (без обмеження) замість 30 хвилин.
-- Невдала автентифікація на старті більше не веде беззастережно до виходу:
-  три спроби, а далі, якщо CID відомий, сервер стартує на дисковому кеші.
+- **BREAKING:** the server moved under the `pike serve` subcommand. The old
+  `pike --sensor X --cid Y` form is no longer supported. The GUI starts with no
+  arguments or via `pike gui`.
+- **BREAKING:** the download route changed from `/s/{filename}` to `/s/{sha256}`.
+- API sensors are no longer merged into the local sensor list — matching always
+  runs against a fresh API listing, so the served sensor version no longer
+  freezes on whatever was downloaded first.
+- Local RPM matching dropped the "any package of this architecture" fallback,
+  which could hand a host a package built for a different distribution.
+- Generated tokens are now 32 characters instead of 8.
+- The default timeout is now 0 (run forever) instead of 30 minutes.
+- A failed startup authentication no longer exits unconditionally: three
+  attempts, then — if the CID is known — the server starts and serves from the
+  disk cache.
+- `pike update --apply` now verifies the release asset's sha256 and refuses to
+  update when the checksum is missing or does not match.
+- CI publishes a `.sha256` file alongside every release binary.
 
 ### Added
 
-- Конфіг-файл TOML (`--config`, типово `/etc/pike/pike.toml`) з пріоритетом
-  флаги > env > конфіг > дефолти.
-- Змінні середовища `PIKE_CLIENT_ID`, `PIKE_CLIENT_SECRET`, `PIKE_CID`,
-  `PIKE_TOKEN` — секрети більше не обовʼязково передавати в argv.
-- Стабільний токен (`--token` або `[server] token`) — ванлайнер переживає
-  рестарт.
-- Дисковий кеш сенсорів за sha256 з перевіркою цілісності, дедуплікацією
-  паралельних завантажень і витісненням за розміром.
-- `--public-url` для роботи за reverse proxy з TLS.
+- TOML config file (`--config`, `/etc/pike/pike.toml` by default) with
+  flags > env > config > defaults precedence.
+- `PIKE_CLIENT_ID`, `PIKE_CLIENT_SECRET`, `PIKE_CID` and `PIKE_TOKEN`
+  environment variables — secrets no longer have to be passed in argv.
+- Pinned token (`--token` or `[server] token`) so the one-liner survives a
+  restart.
+- Disk-backed sensor cache keyed by sha256, with integrity verification,
+  deduplication of concurrent downloads and size-based eviction.
+- `--public-url` for running behind a TLS reverse proxy.
+- `pike service-install` — an interactive wizard that validates credentials
+  against the API, then creates a system user, a 0640 config, a cache directory
+  and a hardened systemd unit.
+- `pike service-uninstall [--purge]`.
+- Optional auto-update timer (off by default), kept separate from the service:
+  under `ProtectSystem=strict` the service cannot rewrite its own binary.
 
 ## [0.3.0] - 2026-02-10
 
