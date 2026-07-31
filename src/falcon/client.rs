@@ -1,7 +1,9 @@
+use futures_util::TryStreamExt;
 use serde::Deserialize;
+use tokio_util::io::StreamReader;
 
 use crate::common::error::AppError;
-use crate::sensors::ports::{BoxFuture, SensorDownloader, SensorLister};
+use crate::sensors::ports::{BoxFuture, BoxReader, SensorDownloader, SensorLister};
 use crate::sensors::types::SensorMeta;
 
 use super::auth::{api_base_url, Authenticator, CONNECT_TIMEOUT, METADATA_TIMEOUT};
@@ -113,7 +115,10 @@ impl FalconClient {
         Ok(data.resources)
     }
 
-    pub async fn download_sensor(&self, sha256: &str) -> Result<bytes::Bytes, AppError> {
+    /// Opens the sensor download as a stream. The body is deliberately not
+    /// buffered: a handful of concurrent callbacks for different distros
+    /// would otherwise hold several gigabytes resident at once.
+    pub async fn download_sensor(&self, sha256: &str) -> Result<BoxReader<'_>, AppError> {
         eprintln!("[falcon] Downloading sensor sha256={} ...", &sha256[..12]);
         let token = self.auth.access_token(&self.http).await?;
         let resp = self
@@ -134,13 +139,8 @@ impl FalconClient {
             return Err(AppError::api("Sensor download failed", status, body));
         }
 
-        let data = resp
-            .bytes()
-            .await
-            .map_err(|e| AppError::http("Failed to read sensor data", e))?;
-
-        eprintln!("[falcon] Downloaded {} bytes", data.len());
-        Ok(data)
+        let stream = resp.bytes_stream().map_err(std::io::Error::other);
+        Ok(Box::pin(StreamReader::new(stream)))
     }
 }
 
@@ -151,7 +151,7 @@ impl SensorLister for FalconClient {
 }
 
 impl SensorDownloader for FalconClient {
-    fn fetch<'a>(&'a self, sha256: &'a str) -> BoxFuture<'a, Result<bytes::Bytes, AppError>> {
+    fn fetch<'a>(&'a self, sha256: &'a str) -> BoxFuture<'a, Result<BoxReader<'a>, AppError>> {
         Box::pin(self.download_sensor(sha256))
     }
 }

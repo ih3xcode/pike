@@ -150,7 +150,7 @@ async fn serve_callback(state: &AppState, body: &str, remote: &str, path: &str) 
     // metadata boundary, so the answer and the cached file name agree
     let sha256 = meta.sha256.to_ascii_lowercase();
 
-    if let Err(e) = store.ensure(&sha256).await {
+    if let Err(e) = store.ensure(&sha256, meta.file_size).await {
         eprintln!("[host] {}: cannot prepare sensor — {e}", info.hostname);
         state.update_host_status(&info.hostname, HostStatus::Failed("sensor unavailable".into()));
         log_request("POST", path, remote, 502, "sensor download failed");
@@ -165,7 +165,7 @@ async fn serve_callback(state: &AppState, body: &str, remote: &str, path: &str) 
 mod tests {
     use super::*;
     use crate::common::AppError;
-    use crate::sensors::ports::{BoxFuture, SensorDownloader, SensorLister};
+    use crate::sensors::ports::{BoxFuture, BoxReader, SensorDownloader, SensorLister};
     use crate::sensors::types::SensorMeta;
     use crate::sensors::{BinaryStore, MetadataCache};
     use crate::server::state::test_support::state;
@@ -199,8 +199,8 @@ mod tests {
     }
 
     impl SensorDownloader for Api {
-        fn fetch<'a>(&'a self, _sha256: &'a str) -> BoxFuture<'a, Result<bytes::Bytes, AppError>> {
-            Box::pin(async move { Ok(bytes::Bytes::from_static(PAYLOAD)) })
+        fn fetch<'a>(&'a self, _sha256: &'a str) -> BoxFuture<'a, Result<BoxReader<'a>, AppError>> {
+            Box::pin(async move { Ok(Box::pin(std::io::Cursor::new(PAYLOAD)) as BoxReader<'a>) })
         }
     }
 
