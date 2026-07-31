@@ -19,13 +19,17 @@ Requires Rust 2024 edition. Release profile uses LTO, strip, opt-level "z", and 
 
 ## Architecture
 
-**Entry point** (`main.rs`): Parses CLI args with clap. Launches GUI mode when no arguments are provided (or `--gui`), otherwise runs CLI mode which builds `AppState`, starts the HTTP server, and blocks until timeout or download limit.
+**Entry point** (`main.rs`): Parses CLI args with clap. Three subcommands: `serve` (HTTP server), `gui` (also the default when no subcommand is given), `update`. `run_serve` resolves the config, authenticates, builds `AppState`, starts the HTTP server, and blocks until timeout or download limit.
 
-**Shared state** (`types.rs`): `AppState` is the central `Arc`-wrapped struct holding token, CID, sensors (`RwLock<Vec<Sensor>>`), host tracking (`Mutex<Vec<HostEntry>>`), download counter, and optional `FalconClient`. Hosts list has a 10,000 entry cap with 25% eviction.
+**Configuration** (`config.rs`): `ServeArgs` (clap) + `FileConfig` (TOML) merge into `ResolvedConfig` with precedence flags > env (`PIKE_*`) > config file > defaults. All clap args are `Option<T>` with no `default_value` — otherwise a clap default would be indistinguishable from an explicit flag and always beat the config file.
 
-**HTTP server** (`server/`): Axum-based with 5 routes (`/lin`, `/win`, `/s/{filename}`, `/cb`, `/done`). Routes are optionally nested under `/{token}` prefix when auth is enabled. Handlers are in `server/handlers.rs`, helper functions in `server/helpers.rs`.
+**Shared state** (`types.rs`): `AppState` is the central `Arc`-wrapped struct holding token, CID, `local_sensors: Vec<Sensor>` (immutable after startup), optional `metadata`/`store` caches, host tracking (`Mutex<Vec<HostEntry>>`), and the download counter. Hosts list has a 10,000 entry cap with 25% eviction.
 
-**Deployment flow**: Client fetches install script (`/lin` or `/win`) → script calls back to `/cb` with `hostname|pkg_type|arch|distro_id|distro_version` → pike matches a sensor and responds with `filename|sha256` → client downloads from `/s/{filename}`, verifies checksum, installs, reports result to `/done`.
+**Sensor caching** (`sensor_store.rs`): `MetadataCache` holds the API sensor list per platform with a TTL, serves a stale snapshot when the API fails, and rate-limits retries after a failure. `BinaryStore` is a disk cache keyed by sha256 with single-flight downloads, checksum verification before publishing, atomic rename, and size-based eviction (`plan_eviction`). API-downloaded binaries are never merged into `local_sensors` — that separation is what keeps matching on fresh metadata.
+
+**HTTP server** (`server/`): Axum-based with 5 routes (`/lin`, `/win`, `/s/{sha256}`, `/cb`, `/done`). Routes are optionally nested under `/{token}` prefix when auth is enabled. Handlers are in `server/handlers.rs`, helper functions in `server/helpers.rs`.
+
+**Deployment flow**: Client fetches install script (`/lin` or `/win`) → script calls back to `/cb` with `hostname|pkg_type|arch|distro_id|distro_version` → pike matches a sensor and responds with `filename|sha256` → client downloads from `/s/{sha256}`, verifies checksum, installs, reports result to `/done`.
 
 **Sensor matching** (`sensor_match.rs`): RPM matching uses distro tags extracted from filenames (e.g. `.el9.x86_64.rpm`) with RHEL-family fallback chains. DEB matching is by architecture only (x86_64→amd64, aarch64→arm64). Windows uses a single multi-arch binary. Both local sensors and API metadata use the same matching logic via `find_best_local_sensor` / `find_best_api_sensor`.
 
