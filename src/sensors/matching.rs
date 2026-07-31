@@ -162,9 +162,10 @@ pub fn find_best_local_sensor<'a>(
                 .copied()
         }
         SensorType::Rpm => {
-            // Тільки точний distro-тег (з ланцюжком для RHEL-родини).
-            // Fallback «будь-який RPM цієї архітектури» навмисно відсутній:
-            // він віддавав пакети чужих дистрибуцій.
+            // Exact distro tag only (with a fallback chain for the RHEL
+            // family). An "any RPM of this architecture" fallback is
+            // deliberately absent: it handed out packages built for other
+            // distributions.
             let tag = distro_tag(distro_id, distro_version)?;
             let tags = if is_rhel_family(distro_id) {
                 rhel_fallback_tags(&tag)
@@ -186,7 +187,8 @@ pub fn find_best_local_sensor<'a>(
 }
 
 /// Find best matching sensor from API metadata list.
-/// API results are sorted by release_date desc, so first match = latest version.
+/// `list_sensors` asks the API for `sort=release_date|desc`, so the first
+/// match is the newest sensor — the order is requested, not assumed.
 pub fn find_best_api_sensor<'a>(
     metas: &'a [SensorMeta],
     file_type: &str,
@@ -652,7 +654,7 @@ mod tests {
 
     #[test]
     fn local_rpm_no_cross_distro_fallback() {
-        // Кеш накопичив SUSE-сенсор; RHEL-хост не має його отримати
+        // The cache holds a SUSE sensor; a RHEL host must not receive it
         let sensors = vec![test_sensor(
             "falcon-sensor-7.33.0-18606.suse15.x86_64.rpm",
             SensorType::Rpm,

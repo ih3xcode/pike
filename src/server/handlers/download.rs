@@ -29,7 +29,7 @@ async fn serve_sensor(state: &AppState, sha256: &str, remote: &str, path: &str) 
         return StatusCode::BAD_REQUEST.into_response();
     }
 
-    // Локальні файли лежать у памʼяті, кешовані з API — на диску
+    // Local files live in memory, API-cached ones on disk
     if let Some(sensor) = state.local_sensors.iter().find(|s| s.sha256 == sha256) {
         let (count, extra) = count_download(state);
         log_request("GET", path, remote, 200, &extra);
@@ -47,9 +47,9 @@ async fn serve_sensor(state: &AppState, sha256: &str, remote: &str, path: &str) 
         return StatusCode::NOT_FOUND.into_response();
     };
 
-    // Свідомо `File::open`, а не `store.ensure`: інакше будь-який 404 на
-    // валідний hex запускав би завантаження з API, і маршрут став би
-    // дешевим підсилювачем зовнішнього трафіку.
+    // Deliberately `File::open` rather than `store.ensure`: otherwise any
+    // 404 on valid hex would trigger a download from the API, turning this
+    // route into a cheap amplifier of outbound traffic.
     let file_path = store.path_for(sha256);
     let file = match tokio::fs::File::open(&file_path).await {
         Ok(f) => f,
@@ -58,25 +58,32 @@ async fn serve_sensor(state: &AppState, sha256: &str, remote: &str, path: &str) 
             return StatusCode::NOT_FOUND.into_response();
         }
     };
-    let size = file.metadata().await.map(|m| m.len()).unwrap_or(0);
+    let size = file.metadata().await.map(|m| m.len()).ok();
 
-    // Лічильник рухається лише коли віддаємо справжній файл — інакше
-    // серія 404 з'їдала б увесь ліміт --max-downloads
+    // The counter only moves when a real file is served — otherwise a run
+    // of 404s would eat the whole --max-downloads budget
     let (count, extra) = count_download(state);
     log_request("GET", path, remote, 200, &extra);
-    eprintln!("[sensor] Serving {sha256} to {remote} ({size} bytes, from cache)");
+    match size {
+        Some(n) => eprintln!("[sensor] Serving {sha256} to {remote} ({n} bytes, from cache)"),
+        None => eprintln!("[sensor] Serving {sha256} to {remote} (size unknown, from cache)"),
+    }
     maybe_stop(state, count);
 
     let stream = tokio_util::io::ReaderStream::new(file);
     let mut resp = axum::body::Body::from_stream(stream).into_response();
-    resp.headers_mut().insert(
-        "content-length",
-        HeaderValue::from_str(&size.to_string()).unwrap_or_else(|_| HeaderValue::from_static("0")),
-    );
+    // Only set the header when the size is actually known: hyper trusts an
+    // explicit content-length and truncates the body to it, so a `0` fallback
+    // would hand the client an empty file under a 200
+    if let Some(n) = size
+        && let Ok(value) = HeaderValue::from_str(&n.to_string())
+    {
+        resp.headers_mut().insert("content-length", value);
+    }
     octet_stream(resp)
 }
 
-/// Зараховує одне успішне завантаження; повертає його номер і рядок для логу.
+/// Counts one successful download; returns its number and a log fragment.
 fn count_download(state: &AppState) -> (u32, String) {
     let count = state
         .download_count
@@ -131,7 +138,7 @@ mod tests {
         assert!(!is_valid_sha256("../../etc/passwd"));
         assert!(
             !is_valid_sha256(&"A".repeat(64)),
-            "верхній регістр не приймаємо"
+            "uppercase is not accepted"
         );
         assert!(!is_valid_sha256(&"g".repeat(64)));
     }
@@ -148,7 +155,7 @@ mod tests {
             st.download_count
                 .load(std::sync::atomic::Ordering::Relaxed),
             0,
-            "404 не має витрачати ліміт --max-downloads"
+            "a 404 must not spend the --max-downloads budget"
         );
     }
 

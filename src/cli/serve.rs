@@ -71,24 +71,23 @@ pub fn run_serve(args: ServeArgs) -> Result<(), i32> {
         }
     };
 
-    rt.block_on(async {
-        if let Err(e) = crate::server::run_server(
-            state,
-            bind_addr,
-            cfg.timeout_minutes,
-            shutdown_notify,
-            true,
-        )
-        .await
-        {
-            eprintln!("ERROR: {e}");
-        }
-    });
-
-    Ok(())
+    // A server error means a non-zero exit code. A busy port or a missing
+    // CAP_NET_BIND_SERVICE would otherwise look like a successful start:
+    // systemd would report `active` while pike kept restarting.
+    rt.block_on(crate::server::run_server(
+        state,
+        bind_addr,
+        cfg.timeout_minutes,
+        shutdown_notify,
+        true,
+    ))
+    .map_err(|e| {
+        eprintln!("ERROR: {e}");
+        1
+    })
 }
 
-/// Явний `--config` мусить існувати; типовий шлях беремо, лише якщо він є.
+/// An explicit `--config` must exist; the default path is used only if present.
 fn resolve_config(args: &ServeArgs) -> Result<ResolvedConfig, i32> {
     let file = match &args.config {
         Some(path) => config::load_file(path).map_err(|e| {
@@ -178,7 +177,7 @@ fn advertised_addr(cfg: &ResolvedConfig) -> String {
     })
 }
 
-/// Автентифікація з обмеженою кількістю спроб; `None`, якщо API так і не відповів.
+/// Authentication with a bounded number of attempts; `None` if the API never answered.
 async fn authenticate_at_startup(
     client_id: &str,
     client_secret: &str,
@@ -200,7 +199,7 @@ async fn authenticate_at_startup(
     None
 }
 
-/// Клієнт API (якщо налаштований) і CID, з яким працюватиме сервер.
+/// The API client (when configured) and the CID the server will run with.
 fn connect_api(rt: &Runtime, cfg: &ResolvedConfig) -> Result<(Option<Arc<FalconClient>>, String), i32> {
     let (Some(client_id), Some(client_secret)) = (&cfg.client_id, &cfg.client_secret) else {
         let cid = cfg.cid.clone().expect("checked by check_sensor_sources");
@@ -208,11 +207,11 @@ fn connect_api(rt: &Runtime, cfg: &ResolvedConfig) -> Result<(Option<Arc<FalconC
         return Ok((None, cid));
     };
 
-    // Креденшели налаштовані, але автентифікація не вдалась — виходимо з
-    // ненульовим кодом. Стартувати «наполовину» не можна: без клієнта немає
-    // ні свіжих метаданих, ні доступу до дискового кешу, тож сервер однаково
-    // віддавав би самі 404. Під Restart=always systemd перезапустить процес,
-    // і невдача буде видно в `systemctl status`.
+    // Credentials are configured but authentication failed — exit non-zero.
+    // Starting "half way" is not an option: without a client there is neither
+    // fresh metadata nor access to the disk cache, so the server would serve
+    // nothing but 404s. Under Restart=always systemd retries the process and
+    // the failure stays visible in `systemctl status`.
     let Some(client) = rt.block_on(authenticate_at_startup(
         client_id,
         client_secret,
@@ -224,7 +223,7 @@ fn connect_api(rt: &Runtime, cfg: &ResolvedConfig) -> Result<(Option<Arc<FalconC
     };
 
     let cid = match cfg.cid.clone() {
-        // Явний CID — API про нього не питаємо
+        // An explicit CID — do not ask the API for one
         Some(cid) => cid,
         None => rt.block_on(client.get_ccid()).map_err(|e| {
             eprintln!("ERROR: cannot determine CID from API: {e}");
@@ -256,8 +255,8 @@ fn build_caches(cfg: &ResolvedConfig, falcon: Option<Arc<FalconClient>>) -> Resu
         Duration::from_secs(cfg.metadata_ttl_minutes * 60),
     );
     let store = BinaryStore::new(client, cfg.cache_dir.clone(), cfg.cache_max_bytes);
-    // Своїх завантажень у польоті ще немає — усе в tmp/ лишилось від
-    // попереднього запуску, обірваного посеред завантаження
+    // No downloads of our own are in flight yet — anything in tmp/ is left
+    // over from a previous run cut short mid-download
     store.sweep_tmp();
 
     Ok((Some(Arc::new(metadata)), Some(Arc::new(store))))

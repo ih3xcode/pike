@@ -1,7 +1,7 @@
 use crate::sensors::SensorType;
 
-/// Розібраний колбек: `hostname|pkg_type|arch|distro_id|distro_version`.
-/// Останні два поля опційні — Windows їх не надсилає.
+/// A parsed callback: `hostname|pkg_type|arch|distro_id|distro_version`.
+/// The last two fields are optional — Windows does not send them.
 pub struct CallbackInfo {
     pub hostname: String,
     pub pkg_type: String,
@@ -11,7 +11,7 @@ pub struct CallbackInfo {
     pub target_type: SensorType,
 }
 
-fn is_valid_hostname(s: &str) -> bool {
+pub(super) fn is_valid_hostname(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 253
         && s.chars()

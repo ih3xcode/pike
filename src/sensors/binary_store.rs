@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -16,8 +16,8 @@ pub struct CacheEntry {
     pub modified: std::time::SystemTime,
 }
 
-/// Які файли видалити, щоб сума розмірів влізла в ліміт.
-/// Витісняються найраніше завантажені (mtime не оновлюється при віддачі).
+/// Which files to remove so the total size fits the limit.
+/// The earliest downloaded go first (mtime is not touched when serving).
 pub fn plan_eviction(mut entries: Vec<CacheEntry>, max_bytes: u64) -> Vec<PathBuf> {
     let mut total: u64 = entries.iter().map(|e| e.size).sum();
     if total <= max_bytes {
@@ -36,13 +36,22 @@ pub fn plan_eviction(mut entries: Vec<CacheEntry>, max_bytes: u64) -> Vec<PathBu
     victims
 }
 
-/// Дисковий кеш бінарів сенсорів. Імʼя файлу дорівнює sha256 його вмісту,
-/// тому каталог самоописовий і переживає рестарт без окремого індексу.
+/// How many recently promised sensors to protect from eviction. The answer
+/// to /cb names a sha256 the host will come back for seconds later in a
+/// separate request; without protection a concurrent download could evict
+/// the file first, and the host would get a 404 for what the server had
+/// just promised.
+const RECENT_PROMISES: usize = 16;
+
+/// A disk cache of sensor binaries. The file name equals the sha256 of its
+/// contents, so the directory is self-describing and survives a restart
+/// without a separate index.
 pub struct BinaryStore {
     downloader: Arc<dyn SensorDownloader>,
     dir: PathBuf,
     max_bytes: u64,
     inflight: std::sync::Mutex<HashMap<String, Arc<OnceCell<()>>>>,
+    recent: std::sync::Mutex<VecDeque<PathBuf>>,
 }
 
 impl BinaryStore {
@@ -52,18 +61,19 @@ impl BinaryStore {
             dir,
             max_bytes,
             inflight: std::sync::Mutex::new(HashMap::new()),
+            recent: std::sync::Mutex::new(VecDeque::new()),
         }
     }
 
     pub fn path_for(&self, sha256: &str) -> PathBuf {
-        // Імʼя завжди в нижньому регістрі: маршрут /s/{sha256} приймає лише
-        // такий, а метадані з API можуть прийти в будь-якому
+        // The name is always lowercase: the /s/{sha256} route accepts only
+        // that, while API metadata may arrive in any case
         self.dir.join(sha256.to_ascii_lowercase())
     }
 
-    /// Прибирає недокачані файли з `tmp/`. Викликається на старті, коли
-    /// власних завантажень у польоті ще немає: після SIGKILL там лишаються
-    /// сирі байти, які не бачить облік розміру й не чистить ніщо інше.
+    /// Clears unfinished downloads out of `tmp/`. Called at startup, when no
+    /// downloads of our own are in flight: after a SIGKILL raw bytes are left
+    /// there that size accounting cannot see and nothing else cleans up.
     pub fn sweep_tmp(&self) {
         let tmp_dir = self.dir.join("tmp");
         let Ok(entries) = std::fs::read_dir(&tmp_dir) else {
@@ -85,12 +95,17 @@ impl BinaryStore {
 
     pub async fn ensure(&self, sha256: &str) -> Result<PathBuf, AppError> {
         let path = self.path_for(sha256);
+        // Remember before checking existence: the promise to the host is the
+        // same whether the file had to be downloaded or was already there
+        self.remember(&path);
+
         if tokio::fs::try_exists(&path).await.unwrap_or(false) {
             return Ok(path);
         }
 
-        // Одна комірка на sha256: перший запит качає, решта чекають на нього.
-        // OnceCell не запамʼятовує помилку, тому невдача не блокує повтор.
+        // One cell per sha256: the first request downloads, the rest wait on
+        // it. OnceCell does not remember an error, so a failure never blocks
+        // a retry.
         let cell = {
             let mut map = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
             map.entry(sha256.to_string())
@@ -103,13 +118,36 @@ impl BinaryStore {
             .await
             .map(|_| ());
 
-        {
-            let mut map = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
-            map.remove(sha256);
-        }
+        self.release(sha256, &cell);
 
         result?;
         Ok(path)
+    }
+
+    /// Drops only our own cell. A plain `remove` would drop someone else's:
+    /// after a failed download the remaining waiters still hold the old cell
+    /// and retry through it, while the next request for the same sha would
+    /// find no key and start a second, concurrent download of the same file.
+    fn release(&self, sha256: &str, cell: &Arc<OnceCell<()>>) {
+        let mut map = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
+        if map.get(sha256).is_some_and(|current| Arc::ptr_eq(current, cell)) {
+            map.remove(sha256);
+        }
+    }
+
+    /// Pushes a path onto the recently-promised queue, dropping the oldest.
+    fn remember(&self, path: &Path) {
+        let mut recent = self.recent.lock().unwrap_or_else(|e| e.into_inner());
+        recent.retain(|p| p != path);
+        recent.push_back(path.to_path_buf());
+        while recent.len() > RECENT_PROMISES {
+            recent.pop_front();
+        }
+    }
+
+    fn protected(&self) -> HashSet<PathBuf> {
+        let recent = self.recent.lock().unwrap_or_else(|e| e.into_inner());
+        recent.iter().cloned().collect()
     }
 
     async fn download_and_place(&self, sha256: &str) -> Result<(), AppError> {
@@ -130,25 +168,30 @@ impl BinaryStore {
         let suffix: [u8; 8] = rand::random();
         let tmp_path = tmp_dir.join(format!("{sha256}.{}", hex::encode(suffix)));
 
-        tokio::fs::write(&tmp_path, &data)
-            .await
-            .map_err(|e| AppError::io("Cannot write sensor to cache", e))?;
+        // Every error path cleans up after itself: sweep_tmp only runs at
+        // startup, so in a long-lived service an abandoned fragment would
+        // count against the limit forever and make the cache over-evict
+        if let Err(e) = tokio::fs::write(&tmp_path, &data).await {
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+            return Err(AppError::io("Cannot write sensor to cache", e));
+        }
 
-        // Атомарний у межах ФС: недокачаний файл ніколи не видно під фінальним іменем
+        // Atomic within the filesystem: a partial file is never visible under the final name
         let final_path = self.path_for(sha256);
-        tokio::fs::rename(&tmp_path, &final_path)
-            .await
-            .map_err(|e| AppError::io("Cannot publish sensor into cache", e))?;
+        if let Err(e) = tokio::fs::rename(&tmp_path, &final_path).await {
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+            return Err(AppError::io("Cannot publish sensor into cache", e));
+        }
 
-        self.run_gc(&final_path).await;
+        self.run_gc().await;
         Ok(())
     }
 
-    /// `keep` — щойно опублікований файл. Він виключений з витіснення:
-    /// інакше при ліміті, меншому за розмір сенсора, GC зносив би його
-    /// одразу після запису, і клієнт отримував би 404 на файл, який
-    /// сервер щойно пообіцяв у відповіді на /cb.
-    async fn run_gc(&self, keep: &Path) {
+    /// Recently promised sensors are excluded from eviction — otherwise, with
+    /// a limit smaller than their combined size, the GC would remove a file
+    /// right after writing it and the client would get a 404 for what the
+    /// server had just promised in its answer to /cb.
+    async fn run_gc(&self) {
         let entries = match Self::scan(&self.dir).await {
             Ok(e) => e,
             Err(e) => {
@@ -158,19 +201,22 @@ impl BinaryStore {
         };
         let in_flight = Self::tmp_bytes(&self.dir).await;
         let total: u64 = entries.iter().map(|e| e.size).sum::<u64>() + in_flight;
-        let candidates: Vec<CacheEntry> = entries.into_iter().filter(|e| e.path != keep).collect();
+        let protected = self.protected();
+        let candidates: Vec<CacheEntry> = entries
+            .into_iter()
+            .filter(|e| !protected.contains(&e.path))
+            .collect();
         let kept: u64 = total - candidates.iter().map(|e| e.size).sum::<u64>();
 
         if total > self.max_bytes && kept > self.max_bytes {
             eprintln!(
-                "[cache] WARNING: {} alone exceeds cache_max_bytes ({kept} > {}); \
-                 raise the limit or the cache will churn",
-                keep.display(),
+                "[cache] WARNING: sensors promised to hosts already exceed cache_max_bytes \
+                 ({kept} > {}); raise the limit or the cache will churn",
                 self.max_bytes
             );
         }
 
-        // Бюджет для решти файлів — ліміт мінус те, що ми зобовʼязані лишити
+        // Budget for the rest is the limit minus what we are obliged to keep
         let budget = self.max_bytes.saturating_sub(kept);
         for victim in plan_eviction(candidates, budget) {
             match tokio::fs::remove_file(&victim).await {
@@ -197,9 +243,10 @@ impl BinaryStore {
         Ok(out)
     }
 
-    /// Скільки байтів займають завантаження в польоті. Вони не витісняються
-    /// (їх пише інша задача), але в ліміт входять — інакше кеш стабільно
-    /// переростав би `cache_max_bytes` на розмір паралельних завантажень.
+    /// How many bytes in-flight downloads occupy. They are never evicted
+    /// (another task is writing them) but they do count against the limit —
+    /// otherwise the cache would steadily overshoot `cache_max_bytes` by the
+    /// size of the concurrent downloads.
     async fn tmp_bytes(dir: &Path) -> u64 {
         let tmp_dir = dir.join("tmp");
         let Ok(mut rd) = tokio::fs::read_dir(&tmp_dir).await else {
@@ -247,7 +294,7 @@ mod tests {
         fn fetch<'a>(&'a self, _sha256: &'a str) -> BoxFuture<'a, Result<bytes::Bytes, AppError>> {
             Box::pin(async move {
                 self.calls.fetch_add(1, Ordering::SeqCst);
-                // Затримка, щоб паралельні виклики справді перетнулись у часі
+                // A delay so concurrent calls genuinely overlap in time
                 tokio::time::sleep(Duration::from_millis(50)).await;
                 if self.corrupt {
                     Ok(bytes::Bytes::from_static(b"not what was promised"))
@@ -277,7 +324,7 @@ mod tests {
         assert_eq!(dl.calls(), 1);
 
         store.ensure(&sha).await.unwrap();
-        assert_eq!(dl.calls(), 1, "другий ensure не має качати повторно");
+        assert_eq!(dl.calls(), 1, "the second ensure must not download again");
     }
 
     #[tokio::test]
@@ -288,7 +335,7 @@ mod tests {
         let store = BinaryStore::new(dl, dir.path().to_path_buf(), u64::MAX);
 
         assert!(store.ensure(&sha).await.is_err());
-        assert!(!dir.path().join(&sha).exists(), "битий файл не має лишитись");
+        assert!(!dir.path().join(&sha).exists(), "a corrupt file must not be left behind");
         let tmp = dir.path().join("tmp");
         if tmp.exists() {
             assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0);
@@ -320,7 +367,7 @@ mod tests {
         assert_eq!(
             dl.calls(),
             1,
-            "десять паралельних запитів = одне завантаження"
+            "ten concurrent requests = one download"
         );
     }
 
@@ -330,11 +377,11 @@ mod tests {
         let payload = b"a sensor larger than the limit";
         let sha = sha256_of(payload);
         let dl = FakeDownloader::new(payload, false);
-        // Ліміт менший за сам сенсор — GC не має зносити те, що щойно обіцяли
+        // The limit is smaller than the sensor — the GC must not remove what was just promised
         let store = BinaryStore::new(dl, dir.path().to_path_buf(), 4);
 
         let path = store.ensure(&sha).await.unwrap();
-        assert!(path.exists(), "щойно завантажений файл витіснено");
+        assert!(path.exists(), "the just-downloaded file was evicted");
         assert_eq!(std::fs::read(&path).unwrap(), payload);
     }
 
@@ -364,12 +411,148 @@ mod tests {
         assert_eq!(
             path,
             dir.path().join(&sha),
-            "маршрут /s/ приймає лише нижній регістр"
+            "the /s/ route only accepts lowercase"
         );
         assert!(path.exists());
     }
 
-    // --- plan_eviction (чиста функція) ---
+    struct MapDownloader {
+        payloads: HashMap<String, Vec<u8>>,
+    }
+
+    impl MapDownloader {
+        fn new(payloads: &[&[u8]]) -> Arc<Self> {
+            Arc::new(Self {
+                payloads: payloads
+                    .iter()
+                    .map(|p| (sha256_of(p), p.to_vec()))
+                    .collect(),
+            })
+        }
+    }
+
+    impl SensorDownloader for MapDownloader {
+        fn fetch<'a>(&'a self, sha256: &'a str) -> BoxFuture<'a, Result<bytes::Bytes, AppError>> {
+            Box::pin(async move {
+                self.payloads
+                    .get(sha256)
+                    .map(|v| bytes::Bytes::from(v.clone()))
+                    .ok_or_else(|| AppError::Other("no such sensor".into()))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn release_leaves_a_foreign_cell_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BinaryStore::new(
+            FakeDownloader::new(b"x", false),
+            dir.path().to_path_buf(),
+            u64::MAX,
+        );
+
+        // A cell from another attempt that waiters are still holding
+        let live = Arc::new(OnceCell::new());
+        store
+            .inflight
+            .lock()
+            .unwrap()
+            .insert("abc".into(), live.clone());
+
+        // Our own cell is no longer the one in the map
+        store.release("abc", &Arc::new(OnceCell::new()));
+
+        let map = store.inflight.lock().unwrap();
+        assert!(
+            map.get("abc").is_some_and(|c| Arc::ptr_eq(c, &live)),
+            "someone else's cell was dropped — the next request would start a second download"
+        );
+    }
+
+    #[tokio::test]
+    async fn release_removes_our_own_cell() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BinaryStore::new(
+            FakeDownloader::new(b"x", false),
+            dir.path().to_path_buf(),
+            u64::MAX,
+        );
+
+        let ours = Arc::new(OnceCell::new());
+        store
+            .inflight
+            .lock()
+            .unwrap()
+            .insert("abc".into(), ours.clone());
+        store.release("abc", &ours);
+
+        assert!(store.inflight.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn partial_file_is_removed_when_publishing_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let payload = b"sensor bytes";
+        let sha = sha256_of(payload);
+        // A directory under the final name — renaming a file over it will fail
+        std::fs::create_dir(dir.path().join(&sha)).unwrap();
+
+        let store = BinaryStore::new(
+            FakeDownloader::new(payload, false),
+            dir.path().to_path_buf(),
+            u64::MAX,
+        );
+
+        // Straight to download_and_place: ensure() would see the directory,
+        // treat the sensor as already cached and never attempt the rename
+        assert!(store.download_and_place(&sha).await.is_err());
+
+        let tmp = dir.path().join("tmp");
+        assert_eq!(
+            std::fs::read_dir(&tmp).unwrap().count(),
+            0,
+            "a leftover in tmp/ would count against the cache budget forever"
+        );
+    }
+
+    #[tokio::test]
+    async fn recently_promised_sensors_survive_gc() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = b"first sensor payload";
+        let second = b"second sensor payload";
+        let dl = MapDownloader::new(&[first, second]);
+        // The limit is just enough for a single sensor
+        let store = BinaryStore::new(dl, dir.path().to_path_buf(), first.len() as u64);
+
+        let a = store.ensure(&sha256_of(first)).await.unwrap();
+        let b = store.ensure(&sha256_of(second)).await.unwrap();
+
+        assert!(
+            a.exists(),
+            "a sensor promised to a host was evicted before the host arrived"
+        );
+        assert!(b.exists());
+    }
+
+    #[tokio::test]
+    async fn files_nobody_was_promised_are_still_evicted() {
+        let dir = tempfile::tempdir().unwrap();
+        let payload = b"fresh sensor";
+        let stale = dir.path().join("f".repeat(64));
+        std::fs::write(&stale, vec![0u8; 1024]).unwrap();
+
+        let store = BinaryStore::new(
+            FakeDownloader::new(payload, false),
+            dir.path().to_path_buf(),
+            payload.len() as u64,
+        );
+        let fresh = store.ensure(&sha256_of(payload)).await.unwrap();
+
+        assert!(!stale.exists(), "the stale file should have been evicted");
+        assert!(fresh.exists());
+    }
+
+    // --- plan_eviction (pure function) ---
 
     fn entry(name: &str, size: u64, secs_ago: u64) -> CacheEntry {
         CacheEntry {

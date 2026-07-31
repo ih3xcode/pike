@@ -80,7 +80,10 @@ impl FalconClient {
                 self.auth.base_url()
             ))
             .bearer_auth(&token)
-            .query(&[("filter", &filter)])
+            // The order is requested explicitly: matching takes the first
+            // hit, so without sort= the version hosts receive would depend
+            // on whatever default ordering the API happens to use
+            .query(&[("filter", filter.as_str()), ("sort", "release_date|desc")])
             .timeout(METADATA_TIMEOUT)
             .send()
             .await
