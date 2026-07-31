@@ -24,69 +24,16 @@ use util::{detect_addr, generate_token, load_sensors};
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
-
-    /// Sensor installer file(s) — type auto-detected from extension (.deb, .rpm, .exe)
-    #[arg(long = "sensor")]
-    sensors: Vec<std::path::PathBuf>,
-
-    /// CrowdStrike Customer ID
-    #[arg(long)]
-    cid: Option<String>,
-
-    /// CrowdStrike cloud (us-1, us-2, eu-1, us-gov-1, us-gov-2)
-    #[arg(long, default_value = "eu-1")]
-    cloud: Option<String>,
-
-    /// CrowdStrike API Client ID
-    #[arg(long)]
-    client_id: Option<String>,
-
-    /// CrowdStrike API Client Secret
-    #[arg(long)]
-    client_secret: Option<String>,
-
-    /// Advertised address for one-liners (auto-detect if omitted)
-    #[arg(long)]
-    addr: Option<String>,
-
-    /// HTTP port
-    #[arg(long, default_value = "8080")]
-    port: u16,
-
-    /// Listen/bind address
-    #[arg(long, default_value = "0.0.0.0")]
-    bind: String,
-
-    /// Timeout in minutes
-    #[arg(long, default_value = "30")]
-    timeout: u64,
-
-    /// Max sensor binary downloads (0 = unlimited)
-    #[arg(long, default_value = "0")]
-    max_downloads: u32,
-
-    /// Force GUI mode
-    #[arg(long)]
-    gui: bool,
-
-    /// Disable token authentication
-    #[arg(long)]
-    no_auth: bool,
-
-    /// Sensor grouping tags (comma-separated)
-    #[arg(long)]
-    tags: Option<String>,
-
-    /// Disable the default 'deployment/pike' tag
-    #[arg(long)]
-    no_default_tag: bool,
 }
 
 #[derive(Subcommand)]
 enum Command {
-    /// Check for updates and optionally install them
+    /// Запустити GUI (типово, якщо команду не вказано)
+    Gui,
+    /// Запустити HTTP-сервер розгортання
+    Serve(config::ServeArgs),
+    /// Перевірити наявність оновлень і за потреби встановити
     Update {
-        /// Download and install the update
         #[arg(long)]
         apply: bool,
     },
@@ -105,29 +52,18 @@ fn main() {
 
     let cli = Cli::parse();
 
-    // Handle subcommands before GUI/CLI logic
-    if let Some(command) = &cli.command {
-        match command {
-            Command::Update { apply } => {
-                if let Err(code) = run_update_command(*apply) {
-                    std::process::exit(code);
-                }
-                return;
+    match cli.command {
+        None | Some(Command::Gui) => gui::run_gui(),
+        Some(Command::Update { apply }) => {
+            if let Err(code) = run_update_command(apply) {
+                std::process::exit(code);
             }
         }
-    }
-
-    // GUI mode: no sensors and no API credentials provided, or --gui flag
-    let has_api_creds = cli.client_id.is_some() && cli.client_secret.is_some();
-    let is_gui = cli.gui || (cli.sensors.is_empty() && cli.cid.is_none() && !has_api_creds);
-
-    if is_gui {
-        gui::run_gui();
-        return;
-    }
-
-    if let Err(code) = run_cli(cli, has_api_creds) {
-        std::process::exit(code);
+        Some(Command::Serve(args)) => {
+            if let Err(code) = run_serve(args) {
+                std::process::exit(code);
+            }
+        }
     }
 }
 
@@ -182,82 +118,179 @@ fn run_update_command(apply: bool) -> Result<(), i32> {
     }
 }
 
-fn run_cli(cli: Cli, has_api_creds: bool) -> Result<(), i32> {
-    // CLI mode — require either sensors+CID or API credentials
-    if cli.sensors.is_empty() && !has_api_creds {
-        eprintln!("ERROR: --sensor or --client-id/--client-secret is required in CLI mode.");
+fn print_banner(
+    state: &AppState,
+    cfg: &config::ResolvedConfig,
+    token: Option<&str>,
+    sensor_lines: &[String],
+    has_api: bool,
+) {
+    let base_url = state.base_url();
+    let max_dl = if cfg.max_downloads == 0 {
+        "unlimited".to_string()
+    } else {
+        cfg.max_downloads.to_string()
+    };
+    let timeout = if cfg.timeout_minutes == 0 {
+        "none".to_string()
+    } else {
+        format!("{} min", cfg.timeout_minutes)
+    };
+
+    eprintln!("pike — CrowdStrike sensor deployer");
+    eprintln!("─────────────────────────────────────────");
+    eprintln!("Server:    http://{}:{}", state.addr, cfg.port);
+    match token {
+        Some(t) => eprintln!("Token:     {t}"),
+        None => eprintln!("Auth:      disabled"),
+    }
+    if let Some(url) = &cfg.public_url {
+        eprintln!("Public:    {url}");
+    }
+    if has_api {
+        eprintln!("API:       connected");
+    }
+    if let Some(tags) = &state.tags {
+        eprintln!("Tags:      {tags}");
+    }
+    eprintln!("Cache:     {}", cfg.cache_dir.display());
+    eprintln!("Timeout:   {timeout} | Max downloads: {max_dl}");
+
+    if !sensor_lines.is_empty() {
+        eprintln!("Sensors:");
+        for line in sensor_lines {
+            eprintln!("{line}");
+        }
+    } else if has_api {
+        eprintln!("Sensors:   on-demand via API");
+    }
+
+    eprintln!();
+    eprintln!("Linux:");
+    eprintln!("  curl -fsS {base_url}/lin | sudo bash");
+    eprintln!();
+    eprintln!("Windows (Run as Administrator):");
+    eprintln!("  irm {base_url}/win | iex");
+    eprintln!();
+}
+
+fn run_serve(args: config::ServeArgs) -> Result<(), i32> {
+    // Конфіг: явний --config обовʼязково має існувати; типовий шлях — лише якщо є
+    let file = match &args.config {
+        Some(path) => match config::load_file(path) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("ERROR: {e}");
+                return Err(1);
+            }
+        },
+        None => {
+            let default_path = std::path::Path::new(config::DEFAULT_CONFIG_PATH);
+            if default_path.exists() {
+                match config::load_file(default_path) {
+                    Ok(f) => {
+                        eprintln!("[init] Using config {}", default_path.display());
+                        f
+                    }
+                    Err(e) => {
+                        eprintln!("ERROR: {e}");
+                        return Err(1);
+                    }
+                }
+            } else {
+                config::FileConfig::default()
+            }
+        }
+    };
+
+    let cfg = match config::resolve(&args, file) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("ERROR: {e}");
+            return Err(1);
+        }
+    };
+
+    let has_api_creds = cfg.client_id.is_some() && cfg.client_secret.is_some();
+    if cfg.files.is_empty() && !has_api_creds {
+        eprintln!("ERROR: provide --sensor or API credentials (--client-id/--client-secret).");
+        return Err(1);
+    }
+    if cfg.cid.is_none() && !has_api_creds {
+        eprintln!("ERROR: provide --cid or API credentials to fetch it.");
         return Err(1);
     }
 
-    if cli.cid.is_none() && !has_api_creds {
-        eprintln!("ERROR: --cid or --client-id/--client-secret is required in CLI mode.");
-        return Err(1);
-    }
-
-    let sensors = if cli.sensors.is_empty() {
+    let sensors = if cfg.files.is_empty() {
         eprintln!("[init] No local sensor files provided");
         Vec::new()
     } else {
-        eprintln!("[init] Loading {} sensor file(s)...", cli.sensors.len());
-        match load_sensors(&cli.sensors) {
+        eprintln!("[init] Loading {} sensor file(s)...", cfg.files.len());
+        match load_sensors(&cfg.files) {
             Ok(s) => {
                 for sensor in &s {
-                    eprintln!("[init]   {} ({} bytes, sha256={})", sensor.filename, sensor.data.len(), &sensor.sha256[..12]);
+                    eprintln!(
+                        "[init]   {} ({} bytes, sha256={})",
+                        sensor.filename,
+                        sensor.data.len(),
+                        &sensor.sha256[..12]
+                    );
                 }
                 s
             }
             Err(e) => {
-                eprintln!("ERROR: {}", e);
+                eprintln!("ERROR: {e}");
                 return Err(1);
             }
         }
     };
 
-    let token = if cli.no_auth {
+    let token = if !cfg.auth_enabled {
         eprintln!("[init] Token auth disabled");
         None
     } else {
-        let t = generate_token();
-        eprintln!("[init] Generated token: {t}");
-        Some(t)
+        match cfg.token.clone() {
+            Some(t) => Some(t),
+            None => {
+                let t = generate_token();
+                eprintln!("[init] Generated token: {t}");
+                eprintln!("[init] WARNING: token is not pinned in config — the one-liner URL changes on every restart");
+                Some(t)
+            }
+        }
     };
-    let addr = cli.addr.unwrap_or_else(|| {
+
+    let addr = cfg.addr.clone().unwrap_or_else(|| {
         eprintln!("[init] Auto-detecting local IP...");
         let a = detect_addr();
         eprintln!("[init] Detected address: {a}");
         a
     });
+
     let shutdown_notify = Arc::new(Notify::new());
-
-    // Build runtime for async operations
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-
-    // Background update check (non-blocking, errors silently ignored)
     let update_handle = rt.spawn(update::check_for_update());
 
-    // If API credentials provided, authenticate and fetch CID
     let (falcon_client, cid) = if has_api_creds {
-        let client_id = cli.client_id.as_deref().unwrap();
-        let client_secret = cli.client_secret.as_deref().unwrap();
+        let client_id = cfg.client_id.clone().unwrap();
+        let client_secret = cfg.client_secret.clone().unwrap();
+        let cloud = cfg.cloud.clone();
+        let explicit_cid = cfg.cid.clone();
 
-        let result: Result<_, error::AppError> = rt.block_on(async {
+        let result: Result<_, error::AppError> = rt.block_on(async move {
             let client =
-                falcon_api::FalconClient::new(client_id, client_secret, cli.cloud.as_deref())
-                    .await?;
-
-            let api_cid = if cli.cid.is_none() {
+                falcon_api::FalconClient::new(&client_id, &client_secret, cloud.as_deref()).await?;
+            let api_cid = if explicit_cid.is_none() {
                 Some(client.get_ccid().await?)
             } else {
-                eprintln!("[init] Using explicit CID: {}", cli.cid.as_deref().unwrap());
                 None
             };
-
             Ok((client, api_cid))
         });
 
         match result {
             Ok((client, api_cid)) => {
-                let cid = cli.cid.unwrap_or_else(|| api_cid.unwrap());
+                let cid = cfg.cid.clone().unwrap_or_else(|| api_cid.unwrap());
                 (Some(client), cid)
             }
             Err(e) => {
@@ -266,70 +299,35 @@ fn run_cli(cli: Cli, has_api_creds: bool) -> Result<(), i32> {
             }
         }
     } else {
-        let cid = cli.cid.unwrap();
+        let cid = cfg.cid.clone().unwrap();
         eprintln!("[init] Local mode, CID: {cid}");
         (None, cid)
     };
 
+    let sensor_lines: Vec<String> = sensors
+        .iter()
+        .map(|s| format!("  {} (SHA256: {})", s.filename, s.sha256))
+        .collect();
+    let has_api = falcon_client.is_some();
+
     let state = Arc::new(AppState {
         token: token.clone(),
         cid,
-        cloud: cli.cloud,
+        cloud: cfg.cloud.clone(),
         addr: addr.clone(),
-        port: cli.port,
-        public_url: None,
+        port: cfg.port,
+        public_url: cfg.public_url.clone(),
         sensors: RwLock::new(sensors),
         download_count: AtomicU32::new(0),
-        max_downloads: cli.max_downloads,
+        max_downloads: cfg.max_downloads,
         shutdown_notify: shutdown_notify.clone(),
         falcon_client,
         hosts: Mutex::new(Vec::new()),
-        tags: scripts::resolve_tags(cli.tags.as_deref(), !cli.no_default_tag),
+        tags: scripts::resolve_tags(cfg.tags.as_deref(), cfg.default_tag),
     });
 
-    // Print banner
-    let base_url = state.base_url();
-    let max_dl_str = if cli.max_downloads == 0 {
-        "unlimited".to_string()
-    } else {
-        cli.max_downloads.to_string()
-    };
+    print_banner(&state, &cfg, token.as_deref(), &sensor_lines, has_api);
 
-    eprintln!("pike — CrowdStrike sensor deployer");
-    eprintln!("─────────────────────────────────────────");
-    eprintln!("Server:    http://{}:{}", addr, cli.port);
-    match &token {
-        Some(t) => eprintln!("Token:     {}", t),
-        None => eprintln!("Auth:      disabled"),
-    }
-    if state.falcon_client.is_some() {
-        eprintln!("API:       connected");
-    }
-    if let Some(tags) = &state.tags {
-        eprintln!("Tags:      {}", tags);
-    }
-    let timeout_str = if cli.timeout == 0 {
-        "none".to_string()
-    } else {
-        format!("{} min", cli.timeout)
-    };
-    eprintln!(
-        "Timeout:   {} | Max downloads: {}",
-        timeout_str, max_dl_str
-    );
-
-    let sensors_snapshot = rt.block_on(state.sensors.read());
-    if !sensors_snapshot.is_empty() {
-        eprintln!("Sensors:");
-        for s in sensors_snapshot.iter() {
-            eprintln!("  {} (SHA256: {})", s.filename, s.sha256);
-        }
-    } else if state.falcon_client.is_some() {
-        eprintln!("Sensors:   on-demand via API");
-    }
-    drop(sensors_snapshot);
-
-    // Show update notice if background check completed
     if update_handle.is_finished() {
         if let Ok(Ok(Some(info))) = rt.block_on(update_handle) {
             eprintln!(
@@ -339,18 +337,7 @@ fn run_cli(cli: Cli, has_api_creds: bool) -> Result<(), i32> {
         }
     }
 
-    eprintln!();
-
-    // Always show commands if CID is available (scripts always served with callback flow)
-    eprintln!("Linux:");
-    eprintln!("  curl -fsS {}/lin | sudo bash", base_url);
-    eprintln!();
-    eprintln!("Windows (Run as Administrator):");
-    eprintln!("  irm {}/win | iex", base_url);
-    eprintln!();
-
-    // Start server
-    let bind_addr: std::net::SocketAddr = match format!("{}:{}", cli.bind, cli.port).parse() {
+    let bind_addr: std::net::SocketAddr = match format!("{}:{}", cfg.bind, cfg.port).parse() {
         Ok(a) => a,
         Err(e) => {
             eprintln!("ERROR: Invalid bind address: {e}");
@@ -362,7 +349,7 @@ fn run_cli(cli: Cli, has_api_creds: bool) -> Result<(), i32> {
         if let Err(e) = server::run_server(
             state,
             bind_addr,
-            cli.timeout,
+            cfg.timeout_minutes,
             shutdown_notify,
             true,
         )
@@ -373,4 +360,44 @@ fn run_cli(cli: Cli, has_api_creds: bool) -> Result<(), i32> {
     });
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn no_args_means_gui() {
+        let cli = Cli::parse_from(["pike"]);
+        assert!(cli.command.is_none());
+    }
+
+    #[test]
+    fn gui_subcommand_parses() {
+        let cli = Cli::parse_from(["pike", "gui"]);
+        assert!(matches!(cli.command, Some(Command::Gui)));
+    }
+
+    #[test]
+    fn serve_subcommand_parses_flags() {
+        let cli = Cli::parse_from(["pike", "serve", "--port", "9090", "--no-auth"]);
+        let Some(Command::Serve(args)) = cli.command else {
+            panic!("expected serve");
+        };
+        assert_eq!(args.port, Some(9090));
+        assert!(args.no_auth);
+    }
+
+    #[test]
+    fn old_top_level_flags_are_rejected() {
+        // Стара форма `pike --sensor x --cid y` більше не підтримується
+        assert!(Cli::try_parse_from(["pike", "--sensor", "x.deb"]).is_err());
+    }
+
+    #[test]
+    fn update_subcommand_still_parses() {
+        let cli = Cli::parse_from(["pike", "update", "--apply"]);
+        assert!(matches!(cli.command, Some(Command::Update { apply: true })));
+    }
 }

@@ -54,7 +54,7 @@ pub fn load_sensors(paths: &[PathBuf]) -> Result<Vec<Sensor>, AppError> {
 }
 
 pub fn generate_token() -> String {
-    let bytes: [u8; 4] = rand::random();
+    let bytes: [u8; 16] = rand::random();
     hex::encode(bytes)
 }
 
@@ -121,7 +121,7 @@ mod tests {
     #[test]
     fn token_length() {
         let token = generate_token();
-        assert_eq!(token.len(), 8);
+        assert_eq!(token.len(), 32);
     }
 
     #[test]
