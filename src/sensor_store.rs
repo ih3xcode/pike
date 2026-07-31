@@ -27,10 +27,18 @@ pub trait SensorDownloader: Send + Sync + 'static {
 /// API кожен запит /cb платив би повний мережевий таймаут.
 const RETRY_AFTER_FAILURE: Duration = Duration::from_secs(60);
 
-struct PlatformState {
+struct Snapshot {
     metas: Vec<SensorMeta>,
     fetched_at: Instant,
-    last_failure: Option<Instant>,
+}
+
+#[derive(Default)]
+struct CacheState {
+    snapshots: HashMap<String, Snapshot>,
+    /// Коли востаннє провалився запит по платформі. Живе окремо від знімків
+    /// навмисно: на холодному старті знімка ще немає, а саме тоді пауза між
+    /// спробами й потрібна найбільше.
+    failures: HashMap<String, Instant>,
 }
 
 /// Список сенсорів з API зі скінченним часом життя.
@@ -40,7 +48,7 @@ struct PlatformState {
 pub struct MetadataCache<L: SensorLister> {
     lister: Arc<L>,
     ttl: Duration,
-    state: tokio::sync::Mutex<HashMap<String, PlatformState>>,
+    state: tokio::sync::Mutex<CacheState>,
 }
 
 impl<L: SensorLister> MetadataCache<L> {
@@ -48,7 +56,7 @@ impl<L: SensorLister> MetadataCache<L> {
         Self {
             lister,
             ttl,
-            state: tokio::sync::Mutex::new(HashMap::new()),
+            state: tokio::sync::Mutex::new(CacheState::default()),
         }
     }
 
@@ -58,40 +66,51 @@ impl<L: SensorLister> MetadataCache<L> {
         let mut guard = self.state.lock().await;
         let now = Instant::now();
 
-        if let Some(entry) = guard.get(platform) {
-            if now.duration_since(entry.fetched_at) < self.ttl {
-                return Ok(entry.metas.clone());
+        if let Some(snapshot) = guard.snapshots.get(platform) {
+            if now.duration_since(snapshot.fetched_at) < self.ttl {
+                return Ok(snapshot.metas.clone());
             }
-            if let Some(failed_at) = entry.last_failure {
-                if now.duration_since(failed_at) < RETRY_AFTER_FAILURE {
-                    return Ok(entry.metas.clone());
-                }
+        }
+
+        // Недавня невдача — не б'ємо по API повторно незалежно від того,
+        // чи є що віддати з кешу
+        if let Some(failed_at) = guard.failures.get(platform) {
+            if now.duration_since(*failed_at) < RETRY_AFTER_FAILURE {
+                return match guard.snapshots.get(platform) {
+                    Some(snapshot) => Ok(snapshot.metas.clone()),
+                    None => Err(AppError::Other(format!(
+                        "sensor list for '{platform}' unavailable; \
+                         the last API call failed and the retry window has not elapsed"
+                    ))),
+                };
             }
         }
 
         match self.lister.list(platform).await {
             Ok(metas) => {
                 let result = metas.clone();
-                guard.insert(
+                guard.failures.remove(platform);
+                guard.snapshots.insert(
                     platform.to_string(),
-                    PlatformState {
+                    Snapshot {
                         metas,
                         fetched_at: Instant::now(),
-                        last_failure: None,
                     },
                 );
                 Ok(result)
             }
             Err(e) => {
-                if let Some(entry) = guard.get_mut(platform) {
-                    entry.last_failure = Some(Instant::now());
-                    eprintln!(
-                        "[meta] WARNING: refresh for '{platform}' failed ({e}); \
-                         serving snapshot from cache"
-                    );
-                    return Ok(entry.metas.clone());
+                guard.failures.insert(platform.to_string(), Instant::now());
+                match guard.snapshots.get(platform) {
+                    Some(snapshot) => {
+                        eprintln!(
+                            "[meta] WARNING: refresh for '{platform}' failed ({e}); \
+                             serving snapshot from cache"
+                        );
+                        Ok(snapshot.metas.clone())
+                    }
+                    None => Err(e),
                 }
-                Err(e)
             }
         }
     }
@@ -340,6 +359,23 @@ mod tests {
         tokio::time::advance(Duration::from_secs(61)).await;
         cache.get("linux").await.unwrap();
         assert_eq!(lister.calls(), 3);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn negative_caching_applies_without_any_snapshot() {
+        // Холодний старт із недоступним API: без паузи кожен запит /cb
+        // платив би повний мережевий таймаут
+        let lister = FakeLister::new(0);
+        let cache = MetadataCache::new(lister.clone(), Duration::from_secs(60));
+
+        assert!(cache.get("linux").await.is_err());
+        assert!(cache.get("linux").await.is_err());
+        assert!(cache.get("linux").await.is_err());
+        assert_eq!(lister.calls(), 1, "повтори мали впертись у паузу");
+
+        tokio::time::advance(Duration::from_secs(61)).await;
+        assert!(cache.get("linux").await.is_err());
+        assert_eq!(lister.calls(), 2);
     }
 
     #[tokio::test(start_paused = true)]

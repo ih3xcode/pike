@@ -60,6 +60,12 @@ fn api_base_url(cloud: Option<&str>) -> &str {
     }
 }
 
+/// Таймаути на метадані. Завантаження сенсора свідомо без загального
+/// таймауту — це сотні мегабайтів, які на повільному каналі йдуть довго;
+/// його захищає лише таймаут з'єднання.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const METADATA_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Perform OAuth2 client_credentials flow, return (access_token, expires_at).
 async fn do_oauth2(
     http: &reqwest::Client,
@@ -73,6 +79,7 @@ async fn do_oauth2(
             ("client_id", client_id),
             ("client_secret", client_secret),
         ])
+        .timeout(METADATA_TIMEOUT)
         .send()
         .await
         .map_err(|e| AppError::http("OAuth2 request failed", e))?;
@@ -100,7 +107,10 @@ impl FalconClient {
         cloud: Option<&str>,
     ) -> Result<Self, AppError> {
         let base_url = api_base_url(cloud).to_string();
-        let http = reqwest::Client::new();
+        let http = reqwest::Client::builder()
+            .connect_timeout(CONNECT_TIMEOUT)
+            .build()
+            .map_err(|e| AppError::http("Cannot build HTTP client", e))?;
 
         eprintln!("[falcon] Authenticating to {base_url} ...");
         let (access_token, expires_at) =
@@ -157,6 +167,7 @@ impl FalconClient {
                 self.base_url
             ))
             .bearer_auth(&token)
+            .timeout(METADATA_TIMEOUT)
             .send()
             .await
             .map_err(|e| AppError::http("CCID request failed", e))?;
@@ -195,6 +206,7 @@ impl FalconClient {
             ))
             .bearer_auth(&token)
             .query(&[("filter", &filter)])
+            .timeout(METADATA_TIMEOUT)
             .send()
             .await
             .map_err(|e| AppError::http("List sensors request failed", e))?;

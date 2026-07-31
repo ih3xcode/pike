@@ -130,18 +130,9 @@ async fn serve_sensor(state: &AppState, sha256: &str, remote: &str, path: &str) 
         return StatusCode::BAD_REQUEST.into_response();
     }
 
-    let count = state
-        .download_count
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        + 1;
-    let extra = if state.max_downloads > 0 {
-        format!("download {}/{}", count, state.max_downloads)
-    } else {
-        format!("download {count}")
-    };
-
     // Локальні файли лежать у памʼяті, кешовані з API — на диску
     if let Some(sensor) = state.local_sensors.iter().find(|s| s.sha256 == sha256) {
+        let (count, extra) = count_download(state);
         log_request("GET", path, remote, 200, &extra);
         eprintln!(
             "[sensor] Serving {} to {remote} ({} bytes)",
@@ -167,6 +158,9 @@ async fn serve_sensor(state: &AppState, sha256: &str, remote: &str, path: &str) 
     };
     let size = file.metadata().await.map(|m| m.len()).unwrap_or(0);
 
+    // Лічильник рухається лише коли віддаємо справжній файл — інакше
+    // серія 404 з'їдала б увесь ліміт --max-downloads
+    let (count, extra) = count_download(state);
     log_request("GET", path, remote, 200, &extra);
     eprintln!("[sensor] Serving {sha256} to {remote} ({size} bytes, from cache)");
     maybe_stop(state, count);
@@ -178,6 +172,20 @@ async fn serve_sensor(state: &AppState, sha256: &str, remote: &str, path: &str) 
         HeaderValue::from_str(&size.to_string()).unwrap_or_else(|_| HeaderValue::from_static("0")),
     );
     octet_stream(resp)
+}
+
+/// Зараховує одне успішне завантаження; повертає його номер і рядок для логу.
+fn count_download(state: &AppState) -> (u32, String) {
+    let count = state
+        .download_count
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        + 1;
+    let extra = if state.max_downloads > 0 {
+        format!("download {}/{}", count, state.max_downloads)
+    } else {
+        format!("download {count}")
+    };
+    (count, extra)
 }
 
 fn octet_stream(mut resp: Response) -> Response {
