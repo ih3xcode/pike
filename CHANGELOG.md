@@ -22,9 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which could hand a host a package built for a different distribution.
 - Generated tokens are now 32 characters instead of 8.
 - The default timeout is now 0 (run forever) instead of 30 minutes.
-- A failed startup authentication no longer exits unconditionally: three
-  attempts, then — if the CID is known — the server starts and serves from the
-  disk cache.
+- Startup authentication is retried three times with backoff; if it still
+  fails, pike exits non-zero rather than starting up unable to serve anything.
+  Under `Restart=always` systemd retries and the failure stays visible in
+  `systemctl status`.
 - `pike update --apply` now verifies the release asset's sha256 and refuses to
   update when the checksum is missing or does not match.
 - CI publishes a `.sha256` file alongside every release binary.
