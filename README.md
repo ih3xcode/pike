@@ -192,21 +192,26 @@ RPM sensors are matched by distro tag and architecture from the filename (e.g. `
 
 ## Project structure
 
+One directory per subsystem. Dependencies run one way: `cli` wires everything
+together, `falcon` implements the ports declared by `sensors`, and `common`
+depends on nothing.
+
 ```
 src/
-  main.rs           Entry point, subcommands (serve/gui/update)
-  config.rs         Flags, env and TOML config merging
-  types.rs          Core types (AppState, Sensor, HostEntry)
-  sensor_match.rs   Distro/arch matching logic
-  sensor_store.rs   API metadata cache + sha256-keyed binary cache
-  scripts.rs        Install script generation
-  falcon_api.rs     CrowdStrike API client
-  util.rs           Sensor loading, token generation
-  server/           HTTP server (axum)
-  gui/              GUI (egui/eframe)
+  main.rs      Entry point
+  cli/         Subcommand entry points (serve/gui/update/service-*)
+  common/      Error type, shutdown, local addresses, token generation
+  config/      Flags, env and TOML config merging
+  sensors/     Sensor types, matching, loading, metadata + binary caches
+  falcon/      CrowdStrike API client (OAuth2 + endpoints)
+  scripts.rs   Install script generation
+  server/      HTTP server (axum): state, routes, handlers
+  gui/         GUI (egui/eframe): state, screens, server lifecycle
+  service/     systemd installer: unit rendering, wizard, apply
+  update/      Self-update: release check, checksum verification, replace
 templates/
-  linux.sh          Bash install template
-  windows.ps1       PowerShell install template
+  linux.sh     Bash install template
+  windows.ps1  PowerShell install template
 ```
 
 ## Tests

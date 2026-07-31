@@ -1,13 +1,16 @@
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use crate::falcon_api::FalconClient;
-use crate::types::AppState;
+use crate::config::defaults;
+use crate::falcon::FalconClient;
+use crate::sensors::{BinaryStore, MetadataCache};
+use crate::server::AppState;
 
-use super::config::*;
-use super::running::RunningState;
-use super::starting::{InitResult, StartingState};
-use super::Screen;
+use super::persist::make_saved_config;
+use super::screens::running::RunningState;
+use super::screens::starting::{InitResult, StartingState};
+use super::state::CLOUD_OPTIONS;
+use super::{config_from_saved, new_config_state, Screen};
 
 impl super::MindeliverApp {
     /// Phase 1: validate config, load local sensors, spawn async init task.
@@ -31,7 +34,7 @@ impl super::MindeliverApp {
                 "[gui] Loading {} sensor file(s)...",
                 config.sensor_paths.len()
             );
-            match crate::util::load_sensors(&config.sensor_paths) {
+            match crate::sensors::loading::load_sensors(&config.sensor_paths) {
                 Ok(s) => {
                     for sensor in &s {
                         eprintln!(
@@ -54,22 +57,13 @@ impl super::MindeliverApp {
         let has_api_creds =
             !config.client_id.trim().is_empty() && !config.client_secret.trim().is_empty();
 
-        let addr = config.available_addrs[config.selected_addr_idx]
-            .1
-            .clone();
+        let addr = config.available_addrs[config.selected_addr_idx].1.clone();
 
-        let public_url =
-            if config.custom_url_enabled && !config.custom_url.trim().is_empty() {
-                Some(
-                    config
-                        .custom_url
-                        .trim()
-                        .trim_end_matches('/')
-                        .to_string(),
-                )
-            } else {
-                None
-            };
+        let public_url = if config.custom_url_enabled && !config.custom_url.trim().is_empty() {
+            Some(config.custom_url.trim().trim_end_matches('/').to_string())
+        } else {
+            None
+        };
 
         let saved_config = make_saved_config(config);
 
@@ -88,12 +82,8 @@ impl super::MindeliverApp {
             }
 
             eprintln!("[gui] API credentials provided, authenticating...");
-            let client = FalconClient::new(
-                &client_id,
-                &client_secret,
-                cloud_for_task.as_deref(),
-            )
-            .await?;
+            let client =
+                FalconClient::new(&client_id, &client_secret, cloud_for_task.as_deref()).await?;
 
             let api_cid = client.get_ccid().await.ok();
             eprintln!(
@@ -109,10 +99,7 @@ impl super::MindeliverApp {
 
         let cid_explicit = config.cid.trim().to_string();
 
-        let tags = crate::scripts::resolve_tags(
-            Some(&config.tags),
-            !config.no_default_tag,
-        );
+        let tags = crate::scripts::resolve_tags(Some(&config.tags), !config.no_default_tag);
 
         self.screen = Screen::Starting(StartingState {
             init_handle,
@@ -184,7 +171,7 @@ impl super::MindeliverApp {
         };
 
         let token = if starting.auth_enabled {
-            Some(crate::util::generate_token())
+            Some(crate::common::token::generate_token())
         } else {
             None
         };
@@ -193,9 +180,9 @@ impl super::MindeliverApp {
         let has_api = init_result.falcon_client.is_some();
         let bind_ip = starting.addr.clone();
 
-        let falcon = init_result.falcon_client.map(std::sync::Arc::new);
+        let falcon = init_result.falcon_client.map(Arc::new);
 
-        let cache_dir = crate::config::default_cache_dir();
+        let cache_dir = defaults::default_cache_dir();
         if let Err(e) = std::fs::create_dir_all(&cache_dir) {
             eprintln!(
                 "[gui] WARNING: cannot create cache dir {}: {e}",
@@ -204,19 +191,15 @@ impl super::MindeliverApp {
         }
 
         let metadata = falcon.clone().map(|c| {
-            std::sync::Arc::new(crate::sensor_store::MetadataCache::new(
+            Arc::new(MetadataCache::new(
                 c,
-                std::time::Duration::from_secs(crate::config::DEFAULT_METADATA_TTL_MINUTES * 60),
+                Duration::from_secs(defaults::DEFAULT_METADATA_TTL_MINUTES * 60),
             ))
         });
         let store = falcon.map(|c| {
-            let store = crate::sensor_store::BinaryStore::new(
-                c,
-                cache_dir,
-                crate::config::DEFAULT_CACHE_MAX_BYTES,
-            );
+            let store = BinaryStore::new(c, cache_dir, defaults::DEFAULT_CACHE_MAX_BYTES);
             store.sweep_tmp();
-            std::sync::Arc::new(store)
+            Arc::new(store)
         });
 
         let app_state = Arc::new(AppState {
@@ -256,17 +239,11 @@ impl super::MindeliverApp {
         let port = starting.port;
         let timeout = starting.timeout;
         let state_clone = app_state.clone();
-        let bind_addr: std::net::SocketAddr =
-            format!("{}:{}", bind_ip, port).parse().unwrap();
+        let bind_addr: std::net::SocketAddr = format!("{}:{}", bind_ip, port).parse().unwrap();
         let handle = self.runtime.spawn(async move {
-            if let Err(e) = crate::server::run_server(
-                state_clone,
-                bind_addr,
-                timeout,
-                shutdown_notify,
-                false,
-            )
-            .await
+            if let Err(e) =
+                crate::server::run_server(state_clone, bind_addr, timeout, shutdown_notify, false)
+                    .await
             {
                 eprintln!("[server] {e}");
             }

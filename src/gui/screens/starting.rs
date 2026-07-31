@@ -1,13 +1,12 @@
 use eframe::egui;
 
-use crate::error::AppError;
-use crate::falcon_api::FalconClient;
-use crate::types::Sensor;
+use crate::common::AppError;
+use crate::falcon::FalconClient;
+use crate::gui::persist::SavedConfig;
+use crate::gui::theme::*;
+use crate::sensors::Sensor;
 
-use super::config::SavedConfig;
-use super::theme::*;
-
-pub(super) struct StartingState {
+pub(crate) struct StartingState {
     pub init_handle: tokio::task::JoinHandle<Result<InitResult, AppError>>,
     pub sensors: Vec<Sensor>,
     pub port: u16,
@@ -22,12 +21,12 @@ pub(super) struct StartingState {
     pub saved_config: SavedConfig,
 }
 
-pub(super) struct InitResult {
+pub(crate) struct InitResult {
     pub falcon_client: Option<FalconClient>,
     pub api_cid: Option<String>,
 }
 
-pub(super) fn draw_starting(ctx: &egui::Context) {
+pub(crate) fn draw_starting(ctx: &egui::Context) {
     egui::CentralPanel::default()
         .frame(egui::Frame::new().fill(BG).inner_margin(egui::Margin::same(24)))
         .show(ctx, |ui| {

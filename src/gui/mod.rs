@@ -1,15 +1,17 @@
-mod config;
 mod lifecycle;
-mod running;
-mod starting;
+mod persist;
+mod screens;
+mod state;
 mod theme;
 mod widgets;
 
 use eframe::egui;
 
-use config::{config_from_saved, draw_config, new_config_state, ConfigState, SavedConfig};
-use running::{draw_running, RunningState};
-use starting::{draw_starting, StartingState};
+use persist::{config_from_saved, SavedConfig};
+use screens::config::draw_config;
+use screens::running::{draw_running, RunningState};
+use screens::starting::{draw_starting, StartingState};
+use state::{new_config_state, ConfigState};
 use theme::apply_theme;
 
 use crate::update;
@@ -31,7 +33,8 @@ pub struct MindeliverApp {
     screen: Screen,
     runtime: tokio::runtime::Runtime,
     update_check: Option<tokio::task::JoinHandle<Option<update::UpdateInfo>>>,
-    update_apply: Option<tokio::task::JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>>>,
+    update_apply:
+        Option<tokio::task::JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>>>,
     update_info: Option<update::UpdateInfo>,
     update_status: Option<String>,
 }
@@ -40,9 +43,8 @@ impl MindeliverApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         apply_theme(&cc.egui_ctx);
         let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-        let update_check = Some(runtime.spawn(async {
-            update::check_for_update().await.ok().flatten()
-        }));
+        let update_check =
+            Some(runtime.spawn(async { update::check_for_update().await.ok().flatten() }));
         Self {
             screen: Screen::Config(new_config_state()),
             runtime,
@@ -126,13 +128,12 @@ impl eframe::App for MindeliverApp {
             }
             Action::BeginUpdate => {
                 if let Some(info) = self.update_info.clone() {
-                    self.update_status = Some(format!(
-                        "Downloading pike {}...",
-                        info.latest_version
-                    ));
-                    self.update_apply = Some(self.runtime.spawn(async move {
-                        update::apply_update(&info).await
-                    }));
+                    self.update_status =
+                        Some(format!("Downloading pike {}...", info.latest_version));
+                    self.update_apply = Some(
+                        self.runtime
+                            .spawn(async move { update::apply_update(&info).await }),
+                    );
                 }
             }
         }
