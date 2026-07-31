@@ -645,6 +645,21 @@ mod tests {
         assert_eq!(mode & 0o777, 0o700, "the default lands in a shared /tmp");
     }
 
+    #[test]
+    #[cfg(unix)]
+    fn an_existing_cache_dir_is_narrowed_too() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = tempfile::tempdir().unwrap();
+        let dir = base.path().join("pike-cache");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        prepare_cache_dir(&dir).unwrap();
+
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700);
+    }
+
     #[tokio::test]
     async fn release_keeps_the_cell_while_a_waiter_holds_it() {
         let dir = tempfile::tempdir().unwrap();
