@@ -163,27 +163,21 @@ pub fn find_best_local_sensor<'a>(
                 .copied()
         }
         SensorType::Rpm => {
-            // RPM: try distro tag + arch match first, then arch-only fallback
-            if let Some(tag) = distro_tag(distro_id, distro_version) {
-                let tags = if is_rhel_family(distro_id) {
-                    rhel_fallback_tags(&tag)
-                } else {
-                    vec![tag]
-                };
-                for t in &tags {
-                    if let Some(s) = type_matches
-                        .iter()
-                        .find(|s| rpm_filename_matches(&s.filename, t, host_arch))
-                    {
-                        return Some(s);
-                    }
-                }
-            }
-            // Fallback: any RPM with matching arch
-            type_matches
-                .iter()
-                .find(|s| s.filename.contains(&format!(".{host_arch}.rpm")))
-                .copied()
+            // Тільки точний distro-тег (з ланцюжком для RHEL-родини).
+            // Fallback «будь-який RPM цієї архітектури» навмисно відсутній:
+            // він віддавав пакети чужих дистрибуцій.
+            let tag = distro_tag(distro_id, distro_version)?;
+            let tags = if is_rhel_family(distro_id) {
+                rhel_fallback_tags(&tag)
+            } else {
+                vec![tag]
+            };
+            tags.iter().find_map(|t| {
+                type_matches
+                    .iter()
+                    .find(|s| rpm_filename_matches(&s.filename, t, host_arch))
+                    .copied()
+            })
         }
         SensorType::WindowsExe => {
             // Windows: single multi-arch binary, just pick first
@@ -654,6 +648,25 @@ mod tests {
             test_sensor("sensor2.rpm", SensorType::Rpm),
         ];
         let result = find_best_local_sensor(&sensors, SensorType::Rpm, "x86_64", "rhel", "9");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn local_rpm_no_cross_distro_fallback() {
+        // Кеш накопичив SUSE-сенсор; RHEL-хост не має його отримати
+        let sensors = vec![test_sensor(
+            "falcon-sensor-7.33.0-18606.suse15.x86_64.rpm",
+            SensorType::Rpm,
+        )];
+        let result = find_best_local_sensor(&sensors, SensorType::Rpm, "x86_64", "rhel", "10");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn local_rpm_no_fallback_unknown_distro() {
+        let sensors = vec![test_sensor("falcon.el9.x86_64.rpm", SensorType::Rpm)];
+        let result =
+            find_best_local_sensor(&sensors, SensorType::Rpm, "x86_64", "archlinux", "rolling");
         assert!(result.is_none());
     }
 }
