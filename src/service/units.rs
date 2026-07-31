@@ -56,6 +56,11 @@ pub fn main_unit(p: &UnitParams) -> String {
 }
 
 pub fn update_unit(exec_path: &str) -> String {
+    // The restart is asked for on the command line rather than through
+    // ExecStartPost=: systemd runs ExecStartPost whenever ExecStart succeeded,
+    // and "already up to date" is a success — so the service would be bounced
+    // every week for nothing. Passing the flag lets pike restart it only when
+    // it actually replaced the binary.
     format!(
         "[Unit]\n\
          Description=Pike self-update\n\
@@ -65,8 +70,7 @@ pub fn update_unit(exec_path: &str) -> String {
          [Service]\n\
          Type=oneshot\n\
          User=root\n\
-         ExecStart={exec_path} update --apply\n\
-         ExecStartPost=/bin/systemctl try-restart pike.service\n"
+         ExecStart={exec_path} update --apply --restart-service\n"
     )
 }
 
@@ -152,12 +156,19 @@ mod tests {
     }
 
     #[test]
-    fn update_unit_runs_as_root_and_restarts_service() {
+    fn update_unit_runs_as_root_and_asks_pike_to_restart() {
         let unit = update_unit("/usr/local/bin/pike");
         assert!(unit.contains("Type=oneshot"));
         assert!(unit.contains("User=root"));
-        assert!(unit.contains("ExecStart=/usr/local/bin/pike update --apply"));
-        assert!(unit.contains("ExecStartPost=/bin/systemctl try-restart pike.service"));
+        assert!(unit.contains("ExecStart=/usr/local/bin/pike update --apply --restart-service"));
+    }
+
+    #[test]
+    fn update_unit_does_not_restart_unconditionally() {
+        // ExecStartPost= runs on every successful ExecStart, including
+        // "already up to date" — that bounced the server weekly for nothing
+        let unit = update_unit("/usr/local/bin/pike");
+        assert!(!unit.contains("ExecStartPost="));
     }
 
     #[test]

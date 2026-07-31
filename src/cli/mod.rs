@@ -24,6 +24,10 @@ enum Command {
     Update {
         #[arg(long)]
         apply: bool,
+        /// Restart pike.service after an update was actually installed
+        /// (used by the auto-update timer)
+        #[arg(long, requires = "apply")]
+        restart_service: bool,
     },
     /// Install pike as a systemd service (Linux, requires root)
     ServiceInstall,
@@ -45,7 +49,10 @@ pub fn run() {
             crate::gui::run_gui();
             Ok(())
         }
-        Some(Command::Update { apply }) => update::run_update_command(apply),
+        Some(Command::Update {
+            apply,
+            restart_service,
+        }) => update::run_update_command(apply, restart_service),
         Some(Command::Serve(args)) => serve::run_serve(args),
         Some(Command::ServiceInstall) => crate::service::install(),
         Some(Command::ServiceUninstall { purge }) => crate::service::uninstall(purge),
@@ -91,6 +98,26 @@ mod tests {
     #[test]
     fn update_subcommand_still_parses() {
         let cli = Cli::parse_from(["pike", "update", "--apply"]);
-        assert!(matches!(cli.command, Some(Command::Update { apply: true })));
+        assert!(matches!(
+            cli.command,
+            Some(Command::Update {
+                apply: true,
+                restart_service: false
+            })
+        ));
+    }
+
+    #[test]
+    fn update_restart_flag_parses_and_needs_apply() {
+        let cli = Cli::parse_from(["pike", "update", "--apply", "--restart-service"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Update {
+                restart_service: true,
+                ..
+            })
+        ));
+        // Restarting without installing anything makes no sense
+        assert!(Cli::try_parse_from(["pike", "update", "--restart-service"]).is_err());
     }
 }
