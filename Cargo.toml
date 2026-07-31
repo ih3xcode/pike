@@ -17,6 +17,7 @@ eframe = { version = "0.33.3", default-features = false, features = ["default_fo
 hex = "0.4.3"
 local-ip-address = "0.6.10"
 rand = "0.9.2"
+rpassword = "7"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
