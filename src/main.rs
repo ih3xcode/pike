@@ -322,33 +322,29 @@ fn run_serve(args: config::ServeArgs) -> Result<(), i32> {
             cfg.cloud.as_deref(),
         ));
 
-        match (client, cfg.cid.clone()) {
+        // Налаштовані креденшели, але автентифікація не вдалась — виходимо з
+        // ненульовим кодом. Стартувати «наполовину» не можна: без клієнта
+        // немає ні свіжих метаданих, ні доступу до дискового кешу, тож сервер
+        // однаково віддавав би самі 404. Під Restart=always systemd
+        // перезапустить процес, і невдача буде видно в `systemctl status`.
+        let Some(client) = client else {
+            eprintln!("ERROR: CrowdStrike API authentication failed; refusing to start.");
+            eprintln!("HINT: check client_id/client_secret and the cloud region in the config.");
+            return Err(1);
+        };
+
+        match cfg.cid.clone() {
             // Явний CID — API про нього не питаємо
-            (Some(client), Some(cid)) => (Some(client), cid),
+            Some(cid) => (Some(client), cid),
             // CID беремо з API; якщо і це не вдалось — конфігурувати нічим
-            (Some(client), None) => match rt.block_on(client.get_ccid()) {
+            None => match rt.block_on(client.get_ccid()) {
                 Ok(cid) => (Some(client), cid),
                 Err(e) => {
                     eprintln!("ERROR: cannot determine CID from API: {e}");
-                    eprintln!(
-                        "HINT: set cid explicitly in the config to start without API access."
-                    );
+                    eprintln!("HINT: set cid explicitly in the config.");
                     return Err(1);
                 }
             },
-            // API недоступний, але CID відомий — працюємо з кешу
-            (None, Some(cid)) => {
-                eprintln!(
-                    "[init] WARNING: CrowdStrike API unavailable — \
-                     serving from disk cache and local files only"
-                );
-                (None, cid)
-            }
-            // Ні API, ні CID — сервер не може віддати робочий скрипт
-            (None, None) => {
-                eprintln!("ERROR: API unavailable and no CID configured; nothing to serve.");
-                return Err(1);
-            }
         }
     } else {
         let cid = cfg.cid.clone().unwrap();

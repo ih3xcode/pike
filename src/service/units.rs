@@ -37,7 +37,7 @@ pub fn main_unit(p: &UnitParams) -> String {
          PrivateDevices=true\n\
          ProtectKernelTunables=true\n\
          ProtectControlGroups=true\n\
-         RestrictAddressFamilies=AF_INET AF_INET6\n\
+         RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6\n\
          RestrictNamespaces=true\n\
          LockPersonality=true\n\
          SystemCallFilter=@system-service\n\
@@ -115,12 +115,19 @@ mod tests {
             "ProtectSystem=strict",
             "ProtectHome=true",
             "PrivateTmp=true",
-            "RestrictAddressFamilies=AF_INET AF_INET6",
             "SystemCallFilter=@system-service",
             "LockPersonality=true",
         ] {
             assert!(unit.contains(directive), "missing {directive}");
         }
+    }
+
+    #[test]
+    fn address_families_allow_nss_and_netlink() {
+        // AF_UNIX потрібен nss-resolve (інакше не резолвиться жодне імʼя),
+        // AF_NETLINK — визначенню локальної адреси через local-ip-address.
+        let unit = main_unit(&params(8080));
+        assert!(unit.contains("RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6"));
     }
 
     #[test]

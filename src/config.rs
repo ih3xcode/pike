@@ -10,8 +10,13 @@ const DEFAULT_BIND: &str = "0.0.0.0";
 const DEFAULT_PORT: u16 = 8080;
 const DEFAULT_TIMEOUT_MINUTES: u64 = 0;
 const DEFAULT_MAX_DOWNLOADS: u32 = 0;
-const DEFAULT_METADATA_TTL_MINUTES: u64 = 60;
-const DEFAULT_CACHE_MAX_BYTES: u64 = 21_474_836_480; // 20 ГіБ
+/// Регіон за замовчуванням. Без нього `api_base_url` мовчки бере us-1,
+/// і EU-тенант отримує 401 на старті або реєструє хости не в ту хмару.
+const DEFAULT_CLOUD: &str = "eu-1";
+pub const DEFAULT_METADATA_TTL_MINUTES: u64 = 60;
+pub const DEFAULT_CACHE_MAX_BYTES: u64 = 21_474_836_480; // 20 ГіБ
+/// Каталог кешу для установки під systemd.
+pub const DEFAULT_SERVICE_CACHE_DIR: &str = "/var/cache/pike";
 
 /// Аргументи `pike serve`. Усі опційні — дефолти живуть у `resolve`,
 /// інакше значення за замовчуванням від clap стало б невідрізнюваним
@@ -39,7 +44,7 @@ pub struct ServeArgs {
     pub public_url: Option<String>,
 
     /// Токен автентифікації (генерується, якщо не задано)
-    #[arg(long, env = "PIKE_TOKEN")]
+    #[arg(long, env = "PIKE_TOKEN", hide_env_values = true)]
     pub token: Option<String>,
 
     /// Таймаут у хвилинах, 0 = без обмеження
@@ -51,11 +56,11 @@ pub struct ServeArgs {
     pub max_downloads: Option<u32>,
 
     /// CrowdStrike API Client ID
-    #[arg(long, env = "PIKE_CLIENT_ID")]
+    #[arg(long, env = "PIKE_CLIENT_ID", hide_env_values = true)]
     pub client_id: Option<String>,
 
     /// CrowdStrike API Client Secret
-    #[arg(long, env = "PIKE_CLIENT_SECRET")]
+    #[arg(long, env = "PIKE_CLIENT_SECRET", hide_env_values = true)]
     pub client_secret: Option<String>,
 
     /// Хмара: us-1, us-2, eu-1, us-gov-1, us-gov-2
@@ -63,7 +68,7 @@ pub struct ServeArgs {
     pub cloud: Option<String>,
 
     /// CrowdStrike Customer ID
-    #[arg(long, env = "PIKE_CID")]
+    #[arg(long, env = "PIKE_CID", hide_env_values = true)]
     pub cid: Option<String>,
 
     /// Каталог кешу сенсорів
@@ -201,7 +206,7 @@ fn blank_to_none(v: Option<String>) -> Option<String> {
 }
 
 /// Токен потрапляє в шлях URL — дозволені лише безпечні там символи.
-fn validate_token(token: &str) -> Result<(), AppError> {
+pub fn validate_token(token: &str) -> Result<(), AppError> {
     let ok = !token.is_empty()
         && token.len() <= 128
         && token
@@ -269,7 +274,8 @@ pub fn resolve(args: &ServeArgs, file: FileConfig) -> Result<ResolvedConfig, App
         cloud: args
             .cloud
             .clone()
-            .or_else(|| blank_to_none(file.falcon.cloud)),
+            .or_else(|| blank_to_none(file.falcon.cloud))
+            .or_else(|| Some(DEFAULT_CLOUD.to_string())),
         cid: args.cid.clone().or_else(|| blank_to_none(file.falcon.cid)),
         cache_dir: args
             .cache_dir
@@ -330,6 +336,26 @@ mod tests {
         assert!(cfg.default_tag);
         assert!(cfg.auth_enabled);
         assert!(cfg.token.is_none());
+        // Без дефолту api_base_url мовчки взяв би us-1
+        assert_eq!(cfg.cloud.as_deref(), Some("eu-1"));
+    }
+
+    #[test]
+    fn cloud_from_file_beats_default() {
+        let mut file = FileConfig::default();
+        file.falcon.cloud = Some("us-2".into());
+        let cfg = resolve(&empty_args(), file).unwrap();
+        assert_eq!(cfg.cloud.as_deref(), Some("us-2"));
+    }
+
+    #[test]
+    fn cloud_arg_beats_file() {
+        let mut args = empty_args();
+        args.cloud = Some("us-gov-1".into());
+        let mut file = FileConfig::default();
+        file.falcon.cloud = Some("us-2".into());
+        let cfg = resolve(&args, file).unwrap();
+        assert_eq!(cfg.cloud.as_deref(), Some("us-gov-1"));
     }
 
     // --- пріоритет ---
