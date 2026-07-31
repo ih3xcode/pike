@@ -61,7 +61,7 @@ The API client only needs the **Sensor Download** scope with **Read** permission
 | `--client-secret <SECRET>` | API Client Secret (env: `PIKE_CLIENT_SECRET`) |
 | `--cloud <CLOUD>` | Cloud region: us-1, us-2, eu-1, us-gov-1, us-gov-2 |
 | `--addr <ADDR>` | Advertised address for one-liners (auto-detected) |
-| `--public-url <URL>` | External URL when running behind a reverse proxy |
+| `--public-url <URL>` | External URL when running behind a reverse proxy. Required there: the install-script URL never comes from the request's `Host` header |
 | `--port <PORT>` | HTTP port (default: 8080) |
 | `--bind <ADDR>` | Bind address (default: 0.0.0.0) |
 | `--token <TOKEN>` | Pin the auth token so the one-liner survives restarts (env: `PIKE_TOKEN`) |

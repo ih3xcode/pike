@@ -89,14 +89,6 @@ impl AppState {
         }
     }
 
-    /// Base URL for the one-liner, built from the request's Host header.
-    pub fn base_url_with_host(&self, host: &str) -> String {
-        match &self.token {
-            Some(t) => format!("http://{}/{}", host, t),
-            None => format!("http://{}", host),
-        }
-    }
-
     /// Base URL from the configuration: `public_url` when set, otherwise
     /// the advertised address and port.
     pub fn base_url(&self) -> String {
@@ -255,24 +247,6 @@ mod tests {
         assert_eq!(
             state(Some("tok"), Some("https://deploy.example.com/")).base_url(),
             "https://deploy.example.com/tok"
-        );
-    }
-
-    // --- base_url_with_host ---
-
-    #[test]
-    fn base_url_with_host_no_token() {
-        assert_eq!(
-            state(None, None).base_url_with_host("myhost:9090"),
-            "http://myhost:9090"
-        );
-    }
-
-    #[test]
-    fn base_url_with_host_and_token() {
-        assert_eq!(
-            state(Some("t0k"), None).base_url_with_host("myhost:9090"),
-            "http://myhost:9090/t0k"
         );
     }
 }

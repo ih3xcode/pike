@@ -18,6 +18,22 @@ pub struct CacheEntry {
     pub modified: std::time::SystemTime,
 }
 
+/// Creates the cache directory and makes sure only its owner can reach it.
+///
+/// The last-resort default lands in a world-writable `/tmp`, where anyone
+/// could otherwise pre-create the directory and plant a symlink named after
+/// a sha256 for `/s/{sha256}` to stream. Failing to narrow the mode means
+/// somebody else owns the directory — a reason to stop, not to continue.
+pub fn prepare_cache_dir(dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
 /// Which files to remove so the total size fits the limit.
 /// The earliest downloaded go first (mtime is not touched when serving).
 pub fn plan_eviction(mut entries: Vec<CacheEntry>, max_bytes: u64) -> Vec<PathBuf> {
@@ -616,6 +632,17 @@ mod tests {
             map.get("abc").is_some_and(|c| Arc::ptr_eq(c, &live)),
             "someone else's cell was dropped — the next request would start a second download"
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn cache_dir_is_private_to_its_owner() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = tempfile::tempdir().unwrap();
+        let dir = base.path().join("pike-cache");
+        prepare_cache_dir(&dir).unwrap();
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700, "the default lands in a shared /tmp");
     }
 
     #[tokio::test]

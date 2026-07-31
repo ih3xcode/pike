@@ -242,9 +242,9 @@ fn build_caches(cfg: &ResolvedConfig, falcon: Option<Arc<FalconClient>>) -> Resu
         return Ok((None, None));
     };
 
-    if let Err(e) = std::fs::create_dir_all(&cfg.cache_dir) {
+    if let Err(e) = crate::sensors::binary_store::prepare_cache_dir(&cfg.cache_dir) {
         eprintln!(
-            "ERROR: cannot create cache dir '{}': {e}",
+            "ERROR: cannot prepare cache dir '{}': {e}",
             cfg.cache_dir.display()
         );
         return Err(1);

@@ -51,6 +51,13 @@ async fn serve_sensor(state: &AppState, sha256: &str, remote: &str, path: &str) 
     // 404 on valid hex would trigger a download from the API, turning this
     // route into a cheap amplifier of outbound traffic.
     let file_path = store.path_for(sha256);
+    // Only ever hand out a regular file. The cache directory is 0700, so a
+    // planted symlink should be impossible — but what goes over this route is
+    // executed as root on the far end, and the check costs one stat.
+    if !matches!(tokio::fs::symlink_metadata(&file_path).await, Ok(m) if m.is_file()) {
+        log_request("GET", path, remote, 404, "sensor not in cache");
+        return StatusCode::NOT_FOUND.into_response();
+    }
     let file = match tokio::fs::File::open(&file_path).await {
         Ok(f) => f,
         Err(_) => {

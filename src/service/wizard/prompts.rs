@@ -7,7 +7,14 @@ const EOF: &str = "stdin is closed — 'pike service-install' needs an interacti
 
 fn read_answer() -> Result<Option<String>, String> {
     let mut line = String::new();
-    match io::stdin().read_line(&mut line) {
+    let read = io::stdin().read_line(&mut line);
+    interpret(read, &line)
+}
+
+/// `Ok(0)` from `read_line` means end of input, not "an empty answer" —
+/// telling the two apart is what stops a required question looping forever.
+fn interpret(read: io::Result<usize>, line: &str) -> Result<Option<String>, String> {
+    match read {
         Ok(0) => Ok(None),
         Ok(_) => Ok(Some(line.trim().to_string())),
         Err(e) => Err(format!("cannot read from stdin: {e}")),
@@ -78,5 +85,31 @@ pub(super) fn prompt_bool(label: &str, default: bool) -> Result<bool, String> {
             "n" | "no" => return Ok(false),
             _ => eprintln!("  (answer y or n)"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn end_of_input_is_not_an_empty_answer() {
+        assert_eq!(interpret(Ok(0), ""), Ok(None));
+    }
+
+    #[test]
+    fn a_blank_line_is_an_empty_answer() {
+        assert_eq!(interpret(Ok(1), "\n"), Ok(Some(String::new())));
+    }
+
+    #[test]
+    fn an_answer_is_trimmed() {
+        assert_eq!(interpret(Ok(6), "  hi \n"), Ok(Some("hi".into())));
+    }
+
+    #[test]
+    fn a_read_error_is_reported() {
+        let err = io::Error::other("broken pipe");
+        assert!(interpret(Err(err), "").is_err());
     }
 }

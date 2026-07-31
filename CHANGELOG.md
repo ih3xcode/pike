@@ -29,6 +29,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pike update --apply` now verifies the release asset's sha256 and refuses to
   update when the checksum is missing or does not match.
 - CI publishes a `.sha256` file alongside every release binary.
+- **BREAKING:** the base URL baked into the install scripts now always comes
+  from the configuration (`addr`/`port`, or `public_url`) instead of the
+  request's `Host` header. The header is attacker-controllable and the script
+  runs as root on the target; reverse-proxy setups must set `--public-url`.
+- An unknown `cloud` is now a startup error. It used to fall back to us-1 and
+  silently drop `--cloud` from the install script, enrolling hosts in the
+  wrong region.
+- Sensor downloads are streamed to disk instead of being buffered in memory,
+  and are fsynced before being published into the cache.
+- The server shuts down gracefully on SIGTERM, not just Ctrl-C.
 
 ### Added
 

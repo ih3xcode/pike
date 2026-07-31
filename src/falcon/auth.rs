@@ -103,29 +103,6 @@ impl Authenticator {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::validate::CLOUDS;
-
-    #[test]
-    fn every_supported_cloud_has_its_own_base_url() {
-        // `validate_cloud` promises the operator that these regions exist;
-        // this is where that promise is actually kept
-        let mut seen = std::collections::HashSet::new();
-        for cloud in CLOUDS {
-            let url = api_base_url(Some(cloud));
-            assert!(url.starts_with("https://"), "{cloud} -> {url}");
-            assert!(seen.insert(url), "{cloud} shares a base URL with another region");
-        }
-    }
-
-    #[test]
-    fn us_1_is_the_bare_endpoint() {
-        assert_eq!(api_base_url(Some("us-1")), "https://api.crowdstrike.com");
-    }
-}
-
 /// OAuth2 client_credentials; returns (access_token, expiry instant).
 async fn do_oauth2(
     http: &reqwest::Client,
@@ -155,4 +132,27 @@ async fn do_oauth2(
     // Refresh 60 seconds before the actual expiry
     let expires_at = Instant::now() + Duration::from_secs(oauth.expires_in.saturating_sub(60));
     Ok((oauth.access_token, expires_at))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::validate::CLOUDS;
+
+    #[test]
+    fn every_supported_cloud_has_its_own_base_url() {
+        // `validate_cloud` promises the operator that these regions exist;
+        // this is where that promise is actually kept
+        let mut seen = std::collections::HashSet::new();
+        for cloud in CLOUDS {
+            let url = api_base_url(Some(cloud));
+            assert!(url.starts_with("https://"), "{cloud} -> {url}");
+            assert!(seen.insert(url), "{cloud} shares a base URL with another region");
+        }
+    }
+
+    #[test]
+    fn us_1_is_the_bare_endpoint() {
+        assert_eq!(api_base_url(Some("us-1")), "https://api.crowdstrike.com");
+    }
 }

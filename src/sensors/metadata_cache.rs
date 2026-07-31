@@ -35,7 +35,13 @@ struct CacheState {
 pub struct MetadataCache {
     lister: Arc<dyn SensorLister>,
     ttl: Duration,
-    state: tokio::sync::Mutex<CacheState>,
+    /// Never held across an await, so reading a fresh snapshot never waits
+    /// on anyone's network call.
+    state: std::sync::Mutex<CacheState>,
+    /// One refresh at a time *per platform*. A single lock for everything
+    /// meant a slow Linux listing — up to the 30s metadata timeout — queued
+    /// every concurrent Windows callback behind it, snapshot or no snapshot.
+    gates: std::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl MetadataCache {
@@ -43,52 +49,77 @@ impl MetadataCache {
         Self {
             lister,
             ttl,
-            state: tokio::sync::Mutex::new(CacheState::default()),
+            state: std::sync::Mutex::new(CacheState::default()),
+            gates: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
     pub async fn get(&self, platform: &str) -> Result<Vec<SensorMeta>, AppError> {
-        // The lock is deliberately held across the await: it collapses
-        // concurrent refreshes of one platform's list into a single API call.
-        let mut guard = self.state.lock().await;
+        if let Some(answer) = self.cached(platform) {
+            return answer;
+        }
+
+        let gate = self.gate(platform);
+        let _refreshing = gate.lock().await;
+
+        // Someone may have refreshed this platform while we waited
+        if let Some(answer) = self.cached(platform) {
+            return answer;
+        }
+
+        let result = self.lister.list(platform).await;
+        self.store(platform, result)
+    }
+
+    /// What the cache can answer without touching the API: a snapshot within
+    /// its TTL, or whatever the failure window dictates. `None` means fetch.
+    fn cached(&self, platform: &str) -> Option<Result<Vec<SensorMeta>, AppError>> {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let now = Instant::now();
 
-        if let Some(snapshot) = guard.snapshots.get(platform) {
+        if let Some(snapshot) = state.snapshots.get(platform) {
             if now.duration_since(snapshot.fetched_at) < self.ttl {
-                return Ok(snapshot.metas.clone());
+                return Some(Ok(snapshot.metas.clone()));
             }
         }
 
         // A recent failure — do not hit the API again, whether or not there
         // is something in the cache to serve
-        if let Some(failed_at) = guard.failures.get(platform) {
-            if now.duration_since(*failed_at) < RETRY_AFTER_FAILURE {
-                return match guard.snapshots.get(platform) {
-                    Some(snapshot) => Ok(snapshot.metas.clone()),
-                    None => Err(AppError::Other(format!(
-                        "sensor list for '{platform}' unavailable; \
-                         the last API call failed and the retry window has not elapsed"
-                    ))),
-                };
-            }
+        let failed_at = state.failures.get(platform)?;
+        if now.duration_since(*failed_at) >= RETRY_AFTER_FAILURE {
+            return None;
         }
+        Some(match state.snapshots.get(platform) {
+            Some(snapshot) => Ok(snapshot.metas.clone()),
+            None => Err(AppError::Other(format!(
+                "sensor list for '{platform}' unavailable; \
+                 the last API call failed and the retry window has not elapsed"
+            ))),
+        })
+    }
 
-        match self.lister.list(platform).await {
+    fn store(
+        &self,
+        platform: &str,
+        result: Result<Vec<SensorMeta>, AppError>,
+    ) -> Result<Vec<SensorMeta>, AppError> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        match result {
             Ok(metas) => {
-                let result = metas.clone();
-                guard.failures.remove(platform);
-                guard.snapshots.insert(
+                let out = metas.clone();
+                state.failures.remove(platform);
+                state.snapshots.insert(
                     platform.to_string(),
                     Snapshot {
                         metas,
                         fetched_at: Instant::now(),
                     },
                 );
-                Ok(result)
+                Ok(out)
             }
             Err(e) => {
-                guard.failures.insert(platform.to_string(), Instant::now());
-                match guard.snapshots.get(platform) {
+                state.failures.insert(platform.to_string(), Instant::now());
+                match state.snapshots.get(platform) {
                     Some(snapshot) => {
                         eprintln!(
                             "[meta] WARNING: refresh for '{platform}' failed ({e}); \
@@ -100,6 +131,11 @@ impl MetadataCache {
                 }
             }
         }
+    }
+
+    fn gate(&self, platform: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut gates = self.gates.lock().unwrap_or_else(|e| e.into_inner());
+        gates.entry(platform.to_string()).or_default().clone()
     }
 }
 
@@ -237,6 +273,51 @@ mod tests {
         let cache = cache_with(lister.clone(), 60);
 
         assert!(cache.get("linux").await.is_err());
+    }
+
+    struct SlowLister {
+        delay: Duration,
+    }
+
+    impl SensorLister for SlowLister {
+        fn list<'a>(
+            &'a self,
+            platform: &'a str,
+        ) -> BoxFuture<'a, Result<Vec<SensorMeta>, AppError>> {
+            Box::pin(async move {
+                if platform == "linux" {
+                    tokio::time::sleep(self.delay).await;
+                }
+                Ok(vec![meta(platform)])
+            })
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_slow_platform_does_not_block_another() {
+        let cache = Arc::new(MetadataCache::new(
+            Arc::new(SlowLister {
+                delay: Duration::from_secs(30),
+            }),
+            Duration::from_secs(3600),
+        ));
+
+        let slow = tokio::spawn({
+            let cache = cache.clone();
+            async move { cache.get("linux").await }
+        });
+        // Let the Linux fetch take its gate and settle into the sleep
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        let start = Instant::now();
+        cache.get("windows").await.unwrap();
+        assert_eq!(
+            start.elapsed(),
+            Duration::ZERO,
+            "a stalled listing for one platform must not queue another"
+        );
+
+        slow.await.unwrap().unwrap();
     }
 
     #[tokio::test(start_paused = true)]

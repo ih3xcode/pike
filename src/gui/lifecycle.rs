@@ -183,9 +183,9 @@ impl super::MindeliverApp {
         let falcon = init_result.falcon_client.map(Arc::new);
 
         let cache_dir = defaults::default_cache_dir();
-        if let Err(e) = std::fs::create_dir_all(&cache_dir) {
+        if let Err(e) = crate::sensors::binary_store::prepare_cache_dir(&cache_dir) {
             eprintln!(
-                "[gui] WARNING: cannot create cache dir {}: {e}",
+                "[gui] WARNING: cannot prepare cache dir {}: {e}",
                 cache_dir.display()
             );
         }

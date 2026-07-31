@@ -6,7 +6,7 @@ use axum::{
 use std::sync::Arc;
 
 use crate::scripts;
-use crate::server::helpers::{host_header, log_request, peer_addr, resolve_base_url};
+use crate::server::helpers::{log_request, peer_addr};
 use crate::server::state::AppState;
 
 pub async fn install_sh(
@@ -15,7 +15,7 @@ pub async fn install_sh(
     req: axum::extract::Request,
 ) -> Response {
     let remote = peer_addr(&req);
-    serve_script(&state, &req, &remote, uri.path(), Platform::Linux)
+    serve_script(&state, &remote, uri.path(), Platform::Linux)
 }
 
 pub async fn install_ps1(
@@ -24,7 +24,7 @@ pub async fn install_ps1(
     req: axum::extract::Request,
 ) -> Response {
     let remote = peer_addr(&req);
-    serve_script(&state, &req, &remote, uri.path(), Platform::Windows)
+    serve_script(&state, &remote, uri.path(), Platform::Windows)
 }
 
 #[derive(Clone, Copy)]
@@ -42,19 +42,18 @@ impl Platform {
     }
 }
 
-fn serve_script(
-    state: &AppState,
-    req: &axum::extract::Request,
-    remote: &str,
-    path: &str,
-    platform: Platform,
-) -> Response {
+fn serve_script(state: &AppState, remote: &str, path: &str, platform: Platform) -> Response {
     if state.cid.is_empty() {
         log_request("GET", path, remote, 404, "no CID configured");
         return StatusCode::NOT_FOUND.into_response();
     }
 
-    let base_url = resolve_base_url(state, &host_header(req));
+    // The URL is baked into a script the far end runs as root, so it comes
+    // from the configuration only. Deriving it from the Host header let a
+    // single poisoned request through a caching proxy — or any redirector —
+    // point every later victim at an attacker's binary. Reverse-proxy setups
+    // say where they live with --public-url.
+    let base_url = state.base_url();
     let script = match platform {
         Platform::Linux => scripts::generate_linux_script(
             &base_url,
