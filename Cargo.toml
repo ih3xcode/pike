@@ -29,6 +29,7 @@ semver = "1"
 self-replace = "1.5.0"
 tempfile = "3.25.0"
 toml = "0.9"
+tokio-util = { version = "0.7", features = ["io"] }
 
 [profile.release]
 lto = true
