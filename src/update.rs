@@ -25,6 +25,29 @@ pub struct UpdateInfo {
     pub download_url: String,
     pub release_url: String,
     pub asset_size: u64,
+    pub checksum_url: Option<String>,
+}
+
+/// Приймає як голий hex, так і формат `sha256sum`: "<hex>  <filename>".
+pub fn verify_asset(data: &[u8], expected: &str) -> Result<(), String> {
+    let expected_hex = expected
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
+    if expected_hex.len() != 64 || !expected_hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(format!("malformed checksum: {expected:?}"));
+    }
+
+    use sha2::{Digest, Sha256};
+    let actual = hex::encode(Sha256::digest(data));
+    if actual == expected_hex {
+        Ok(())
+    } else {
+        Err(format!(
+            "checksum mismatch: expected {expected_hex}, got {actual}"
+        ))
+    }
 }
 
 fn asset_name() -> Option<&'static str> {
@@ -63,12 +86,20 @@ pub async fn check_for_update() -> Result<Option<UpdateInfo>, Box<dyn std::error
         .find(|a| a.name == expected_asset)
         .ok_or_else(|| format!("no asset '{}' in release", expected_asset))?;
 
+    let checksum_name = format!("{expected_asset}.sha256");
+    let checksum_url = release
+        .assets
+        .iter()
+        .find(|a| a.name == checksum_name)
+        .map(|a| a.browser_download_url.clone());
+
     Ok(Some(UpdateInfo {
         current_version: CURRENT_VERSION.to_string(),
         latest_version: latest_tag.to_string(),
         download_url: asset.browser_download_url.clone(),
         release_url: release.html_url,
         asset_size: asset.size,
+        checksum_url,
     }))
 }
 
@@ -83,6 +114,26 @@ pub async fn apply_update(info: &UpdateInfo) -> Result<(), Box<dyn std::error::E
         .bytes()
         .await?;
 
+    match &info.checksum_url {
+        Some(url) => {
+            let checksum = client
+                .get(url)
+                .header("User-Agent", USER_AGENT)
+                .send()
+                .await?
+                .error_for_status()?
+                .text()
+                .await?;
+            verify_asset(&bytes, &checksum)?;
+            eprintln!("Checksum verified.");
+        }
+        None => {
+            return Err(
+                "release has no .sha256 asset — refusing to replace the binary unverified".into(),
+            );
+        }
+    }
+
     // Write to a temp file, then replace the current binary
     let mut tmp = tempfile::NamedTempFile::new()?;
     std::io::Write::write_all(&mut tmp, &bytes)?;
@@ -95,6 +146,10 @@ pub async fn apply_update(info: &UpdateInfo) -> Result<(), Box<dyn std::error::E
     }
 
     self_replace::self_replace(tmp.path())?;
+
+    if std::path::Path::new("/etc/systemd/system/pike.service").exists() {
+        eprintln!("A pike systemd service is installed — run: systemctl restart pike");
+    }
     Ok(())
 }
 
@@ -114,6 +169,42 @@ mod tests {
         if cfg!(target_os = "linux") {
             assert!(name.is_some());
         }
+    }
+
+    #[test]
+    fn verify_accepts_matching_checksum() {
+        let data = b"binary contents";
+        let sha = {
+            use sha2::{Digest, Sha256};
+            let mut h = Sha256::new();
+            h.update(data);
+            hex::encode(h.finalize())
+        };
+        assert!(verify_asset(data, &sha).is_ok());
+    }
+
+    #[test]
+    fn verify_accepts_sha256sum_file_format() {
+        // GNU sha256sum пише "<hex>  <filename>"
+        let data = b"binary contents";
+        let sha = {
+            use sha2::{Digest, Sha256};
+            let mut h = Sha256::new();
+            h.update(data);
+            hex::encode(h.finalize())
+        };
+        let line = format!("{sha}  pike-linux-amd64\n");
+        assert!(verify_asset(data, &line).is_ok());
+    }
+
+    #[test]
+    fn verify_rejects_mismatch() {
+        assert!(verify_asset(b"actual", &"0".repeat(64)).is_err());
+    }
+
+    #[test]
+    fn verify_rejects_garbage_checksum() {
+        assert!(verify_asset(b"actual", "not a checksum").is_err());
     }
 
     #[test]
