@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.0] - 2026-07-31
+## [0.4.0] - 2026-08-01
 
 ### Changed
 
@@ -38,7 +38,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wrong region.
 - Sensor downloads are streamed to disk instead of being buffered in memory,
   and are fsynced before being published into the cache.
-- The server shuts down gracefully on SIGTERM, not just Ctrl-C.
+- The server shuts down gracefully on SIGTERM, not just Ctrl-C. `systemctl
+  stop` and `systemctl restart` no longer truncate a sensor download in
+  progress.
+- The auto-update timer only restarts the service when an update was actually
+  installed; it used to bounce the server every week regardless.
+- Empty environment variables are treated as unset, matching empty values in
+  the config file. `PIKE_CID=` used to start a server that answered 404 to
+  every install-script request.
+- `/done` now validates the hostname the same way `/cb` does and strips
+  control characters from the reported message.
 
 ### Added
 
@@ -53,7 +62,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--public-url` for running behind a TLS reverse proxy.
 - `pike service-install` — an interactive wizard that validates credentials
   against the API, then creates a system user, a 0640 config, a cache directory
-  and a hardened systemd unit.
+  and a hardened systemd unit. It refuses to run without an interactive
+  terminal and never offers `0.0.0.0` or loopback as the advertised address.
 - `pike service-uninstall [--purge]`.
 - Optional auto-update timer (off by default), kept separate from the service:
   under `ProtectSystem=strict` the service cannot rewrite its own binary.
